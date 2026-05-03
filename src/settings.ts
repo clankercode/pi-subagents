@@ -26,6 +26,12 @@ export interface SubagentsSettings {
    * (next pi session); runtime menu/runtime-fire short-circuit is immediate.
    */
   schedulingEnabled?: boolean;
+  /**
+   * When true (default), subagent model choices are validated against the
+   * available models from the model registry. Models outside the scope are
+   * rejected with an error listing the available models.
+   */
+  scopeModels?: boolean;
 }
 
 /** Setter hooks used by applySettings to wire persisted values into in-memory state. */
@@ -35,6 +41,7 @@ export interface SettingsAppliers {
   setGraceTurns: (n: number) => void;
   setDefaultJoinMode: (mode: JoinMode) => void;
   setSchedulingEnabled: (b: boolean) => void;
+  setScopeModels: (enabled: boolean) => void;
 }
 
 /** Emit callback — a subset of `pi.events.emit` to keep helpers testable. */
@@ -80,6 +87,9 @@ function sanitize(raw: unknown): SubagentsSettings {
   }
   if (typeof r.schedulingEnabled === "boolean") {
     out.schedulingEnabled = r.schedulingEnabled;
+  }
+  if (typeof r.scopeModels === "boolean") {
+    out.scopeModels = r.scopeModels;
   }
   return out;
 }
@@ -136,6 +146,7 @@ export function applySettings(s: SubagentsSettings, appliers: SettingsAppliers):
   if (typeof s.graceTurns === "number") appliers.setGraceTurns(s.graceTurns);
   if (s.defaultJoinMode) appliers.setDefaultJoinMode(s.defaultJoinMode);
   if (typeof s.schedulingEnabled === "boolean") appliers.setSchedulingEnabled(s.schedulingEnabled);
+  if (typeof s.scopeModels === "boolean") appliers.setScopeModels(s.scopeModels);
 }
 
 /**

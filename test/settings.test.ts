@@ -199,6 +199,22 @@ describe("settings persistence", () => {
       }
     });
 
+    it("accepts scopeModels boolean (true and false)", () => {
+      writeProject({ scopeModels: true });
+      expect(loadSettings(projectDir)).toEqual({ scopeModels: true });
+      writeProject({ scopeModels: false });
+      expect(loadSettings(projectDir)).toEqual({ scopeModels: false });
+    });
+
+    it("drops non-boolean scopeModels", () => {
+      writeProject({ scopeModels: "yes" });
+      expect(loadSettings(projectDir).scopeModels).toBeUndefined();
+      writeProject({ scopeModels: 1 });
+      expect(loadSettings(projectDir).scopeModels).toBeUndefined();
+      writeProject({ scopeModels: null });
+      expect(loadSettings(projectDir).scopeModels).toBeUndefined();
+    });
+
     it("returns {} when the JSON root is not an object (array, string, null)", () => {
       mkdirSync(join(projectDir, ".pi"), { recursive: true });
       writeFileSync(projectFile(), '["not", "an", "object"]');
@@ -295,6 +311,7 @@ describe("settings persistence", () => {
         setGraceTurns: vi.fn(),
         setDefaultJoinMode: vi.fn(),
         setSchedulingEnabled: vi.fn(),
+        setScopeModels: vi.fn(),
       };
     });
 
@@ -305,6 +322,7 @@ describe("settings persistence", () => {
       expect(appliers.setGraceTurns).not.toHaveBeenCalled();
       expect(appliers.setDefaultJoinMode).not.toHaveBeenCalled();
       expect(appliers.setSchedulingEnabled).not.toHaveBeenCalled();
+      expect(appliers.setScopeModels).not.toHaveBeenCalled();
     });
 
     it("applies only the fields that are present", () => {
@@ -314,9 +332,10 @@ describe("settings persistence", () => {
       expect(appliers.setDefaultMaxTurns).not.toHaveBeenCalled();
       expect(appliers.setDefaultJoinMode).not.toHaveBeenCalled();
       expect(appliers.setSchedulingEnabled).not.toHaveBeenCalled();
+      expect(appliers.setScopeModels).not.toHaveBeenCalled();
     });
 
-    it("applies all five fields when all are present", () => {
+    it("applies all fields when all are present", () => {
       applySettings(
         {
           maxConcurrent: 8,
@@ -324,6 +343,7 @@ describe("settings persistence", () => {
           graceTurns: 7,
           defaultJoinMode: "group",
           schedulingEnabled: false,
+          scopeModels: true,
         },
         appliers,
       );
@@ -332,6 +352,12 @@ describe("settings persistence", () => {
       expect(appliers.setGraceTurns).toHaveBeenCalledWith(7);
       expect(appliers.setDefaultJoinMode).toHaveBeenCalledWith("group");
       expect(appliers.setSchedulingEnabled).toHaveBeenCalledWith(false);
+      expect(appliers.setScopeModels).toHaveBeenCalledWith(true);
+    });
+
+    it("applies scopeModels: false", () => {
+      applySettings({ scopeModels: false }, appliers);
+      expect(appliers.setScopeModels).toHaveBeenCalledWith(false);
     });
 
     it("applies defaultMaxTurns: 0 as the explicit unlimited marker", () => {
@@ -387,6 +413,7 @@ describe("settings persistence", () => {
         setGraceTurns: vi.fn(),
         setDefaultJoinMode: vi.fn(),
         setSchedulingEnabled: vi.fn(),
+        setScopeModels: vi.fn(),
       };
     });
 
