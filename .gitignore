@@ -32,3 +32,9 @@ Thumbs.db
 .vscode
 coverage/
 .gitnexus
+.pi/subagents.json
+
+# Pi internal files
+progress.md
+AGENTS.md
+CLAUDE.md
