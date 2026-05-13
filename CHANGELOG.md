@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Subagent sessions now get a stable, type-derived name with an id suffix for parallel spawns** ([#51](https://github.com/tintinweb/pi-subagents/pull/51) — thanks [@forcepushdev](https://github.com/forcepushdev)). `runAgent` calls `session.setSessionName(agentConfig?.name ?? type)`, and when the manager assigns an `agentId` (always, in production), the name is suffixed with an 8-char slice — e.g. `Explore#a1b2c3d4` — so concurrent spawns of the same agent type are distinguishable in the overlay instead of all collapsing onto the same bare name. Direct `runAgent` callers without an `agentId` (e.g. tests) get the bare name.
+
 ### Fixed
 - **Cross-extension spawn RPC now accepts a string `options.model`** ([#59](https://github.com/tintinweb/pi-subagents/pull/59), fixes [#60](https://github.com/tintinweb/pi-subagents/issues/60)). Cross-extension callers (e.g. `@tintinweb/pi-tasks@>=0.4.3`'s `TaskExecute`) naturally forward `model` as a serializable `"provider/modelId"` string. Previously the spawn handler passed strings straight through to `runAgent()`, which expects a `Model` object — the spawned agent then crashed with `No API key found for undefined`. The handler now resolves strings via the same `resolveModel(ctx.modelRegistry)` path the scheduler uses; `Model` objects pass through unchanged. Unresolved strings surface the human-readable `Model not found: "…"` error instead of the auth-lookup crash. Thanks @any-victor.
 
