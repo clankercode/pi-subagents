@@ -5,7 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.8.0] - 2026-05-26
+
+> **⚠️ Breaking: peer dependencies moved from `@mariozechner/pi-*` to `@earendil-works/pi-*`.** The upstream Pi runtime relocated npm scopes on 2026-05-07; the `@mariozechner/pi-*` packages are deprecated. This release pins `@earendil-works/pi-{ai,coding-agent,tui}` at `>=0.74.0`. Hosts on the old scope must update their pi installation first (`pi update --self` handles the rename automatically) before installing this version.
 
 ### Changed
 - **Peer deps migrated from `@mariozechner/pi-*` to `@earendil-works/pi-*`** ([#76](https://github.com/tintinweb/pi-subagents/issues/76) — thanks [@SEHANTA](https://github.com/SEHANTA) for the report). On **2026-05-07** the upstream Pi runtime moved npm scopes — `@mariozechner/pi-coding-agent@0.73.1` was the final publish (now deprecated on npm), and `@earendil-works/pi-coding-agent@0.74.0` shipped 30 minutes later from the same monorepo (same author, same code). `peerDependencies` now target `@earendil-works/pi-{ai,coding-agent,tui}` at `>=0.74.0`, and all `src/**` and `test/**` imports are renamed to the new scope — pure rename, no API changes. Consumers pinning the new scope no longer hit the peer-dep conflict warnings reported in [#76](https://github.com/tintinweb/pi-subagents/issues/76).
