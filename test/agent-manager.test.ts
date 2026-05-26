@@ -382,3 +382,197 @@ describe("AgentManager — isolation: worktree fails loud, no silent fallback", 
     expect(runAgent).not.toHaveBeenCalled();
   });
 });
+
+describe("AgentManager — abort() state machine", () => {
+  let manager: AgentManager;
+  afterEach(() => manager?.dispose());
+
+  it("returns false for an unknown id (no record, no side-effects)", () => {
+    manager = new AgentManager();
+    expect(manager.abort("does-not-exist")).toBe(false);
+  });
+
+  it("removes a queued agent from the queue and marks it stopped", () => {
+    // Concurrency=1: the second background spawn queues behind the first
+    manager = new AgentManager(undefined, 1);
+    vi.mocked(runAgent).mockImplementation(() => new Promise(() => {}));
+
+    manager.spawn(mockPi, mockCtx, "X", "blocker", { description: "block", isBackground: true });
+    const queuedId = manager.spawn(mockPi, mockCtx, "Y", "queued", {
+      description: "q",
+      isBackground: true,
+    });
+    const queuedRecord = manager.getRecord(queuedId)!;
+    expect(queuedRecord.status).toBe("queued");
+
+    expect(manager.abort(queuedId)).toBe(true);
+    expect(queuedRecord.status).toBe("stopped");
+    expect(queuedRecord.completedAt).toBeGreaterThan(0);
+    // Aborting again is a no-op — status is no longer "queued" or "running"
+    expect(manager.abort(queuedId)).toBe(false);
+  });
+
+  it("aborts a running agent by firing its AbortController and setting status='stopped'", () => {
+    manager = new AgentManager();
+    let receivedSignal: AbortSignal | undefined;
+    vi.mocked(runAgent).mockImplementation((_ctx, _type, _prompt, opts) => {
+      receivedSignal = (opts as { signal?: AbortSignal })?.signal;
+      return new Promise(() => {});
+    });
+
+    const id = manager.spawn(mockPi, mockCtx, "X", "p", {
+      description: "r",
+      isBackground: true,
+    });
+    const record = manager.getRecord(id)!;
+    expect(record.status).toBe("running");
+    expect(receivedSignal?.aborted).toBe(false);
+
+    expect(manager.abort(id)).toBe(true);
+    expect(record.status).toBe("stopped");
+    expect(record.completedAt).toBeGreaterThan(0);
+    expect(receivedSignal?.aborted).toBe(true);
+  });
+
+  it("returns false (and does not change status) for an already-completed agent", async () => {
+    manager = new AgentManager();
+    resolvedRun();
+    const id = manager.spawn(mockPi, mockCtx, "X", "p", {
+      description: "x",
+      isBackground: false,
+    });
+    await manager.getRecord(id)?.promise;
+    expect(manager.getRecord(id)?.status).toBe("completed");
+
+    expect(manager.abort(id)).toBe(false);
+    expect(manager.getRecord(id)?.status).toBe("completed");
+  });
+});
+
+// Regression for #44: ESC during a foreground Agent call must propagate to
+// the child. Pi delivers parent abort via AbortSignal; the manager wires the
+// signal's "abort" event to this.abort(id).
+describe("AgentManager — parent abort signal forwarding (#44)", () => {
+  let manager: AgentManager;
+  afterEach(() => manager?.dispose());
+
+  it("aborts the child when the parent signal aborts", () => {
+    manager = new AgentManager();
+    vi.mocked(runAgent).mockImplementation(() => new Promise(() => {}));
+
+    const parent = new AbortController();
+    const id = manager.spawn(mockPi, mockCtx, "X", "p", {
+      description: "x",
+      isBackground: false,
+      signal: parent.signal,
+    });
+    const record = manager.getRecord(id)!;
+    expect(record.status).toBe("running");
+
+    parent.abort();
+    expect(record.status).toBe("stopped");
+    expect(record.completedAt).toBeGreaterThan(0);
+  });
+});
+
+describe("AgentManager — listAgents() ordering", () => {
+  let manager: AgentManager;
+  afterEach(() => manager?.dispose());
+
+  it("returns records sorted by startedAt descending (most recent first)", () => {
+    manager = new AgentManager();
+    resolvedRun();
+
+    const a = manager.spawn(mockPi, mockCtx, "X", "1", { description: "a" });
+    const b = manager.spawn(mockPi, mockCtx, "X", "2", { description: "b" });
+    const c = manager.spawn(mockPi, mockCtx, "X", "3", { description: "c" });
+
+    // Force deterministic startedAt — Date.now() can collide on fast runs
+    manager.getRecord(a)!.startedAt = 100;
+    manager.getRecord(b)!.startedAt = 200;
+    manager.getRecord(c)!.startedAt = 300;
+
+    expect(manager.listAgents().map((r) => r.id)).toEqual([c, b, a]);
+  });
+});
+
+describe("AgentManager — abortAll", () => {
+  let manager: AgentManager;
+  afterEach(() => manager?.dispose());
+
+  it("stops both queued and running agents and returns the total count", () => {
+    manager = new AgentManager(undefined, 1);
+    vi.mocked(runAgent).mockImplementation(() => new Promise(() => {}));
+
+    const running = manager.spawn(mockPi, mockCtx, "X", "r", {
+      description: "r",
+      isBackground: true,
+    });
+    const queued = manager.spawn(mockPi, mockCtx, "Y", "q", {
+      description: "q",
+      isBackground: true,
+    });
+    expect(manager.getRecord(running)?.status).toBe("running");
+    expect(manager.getRecord(queued)?.status).toBe("queued");
+
+    expect(manager.abortAll()).toBe(2);
+    expect(manager.getRecord(running)?.status).toBe("stopped");
+    expect(manager.getRecord(queued)?.status).toBe("stopped");
+    expect(manager.hasRunning()).toBe(false);
+  });
+
+  it("returns 0 when there are no running or queued agents", () => {
+    manager = new AgentManager();
+    expect(manager.abortAll()).toBe(0);
+  });
+});
+
+describe("AgentManager — hasRunning", () => {
+  let manager: AgentManager;
+  afterEach(() => manager?.dispose());
+
+  it("is true while a background agent is running, false after it completes", async () => {
+    manager = new AgentManager();
+    resolvedRun();
+
+    expect(manager.hasRunning()).toBe(false);
+    const id = manager.spawn(mockPi, mockCtx, "X", "p", {
+      description: "x",
+      isBackground: true,
+    });
+    expect(manager.hasRunning()).toBe(true);
+
+    await manager.getRecord(id)?.promise;
+    expect(manager.hasRunning()).toBe(false);
+  });
+
+  it("is true when an agent is queued behind the concurrency limit", () => {
+    manager = new AgentManager(undefined, 1);
+    vi.mocked(runAgent).mockImplementation(() => new Promise(() => {}));
+
+    manager.spawn(mockPi, mockCtx, "X", "r", { description: "r", isBackground: true });
+    manager.spawn(mockPi, mockCtx, "Y", "q", { description: "q", isBackground: true });
+    expect(manager.hasRunning()).toBe(true);
+  });
+});
+
+describe("AgentManager — runAgent rejection leaves the record visible with error status", () => {
+  let manager: AgentManager;
+  afterEach(() => manager?.dispose());
+
+  it("sets status='error', captures the error message, and stamps completedAt", async () => {
+    manager = new AgentManager();
+    vi.mocked(runAgent).mockRejectedValue(new Error("boom"));
+
+    const id = manager.spawn(mockPi, mockCtx, "X", "p", {
+      description: "x",
+      isBackground: false,
+    });
+    const record = manager.getRecord(id)!;
+    await record.promise;
+
+    expect(record.status).toBe("error");
+    expect(record.error).toBe("boom");
+    expect(record.completedAt).toBeGreaterThan(0);
+  });
+});

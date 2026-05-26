@@ -26,3 +26,4 @@ tests/
 .vscode
 .github/
 biome.json
+coverage/
