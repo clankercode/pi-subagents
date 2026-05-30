@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-05-30
+
+### Added
+- **`Agent`, `get_subagent_result`, and `steer_subagent` now surface in pi's default system prompt** ([#87](https://github.com/tintinweb/pi-subagents/pull/87) — thanks [@that-yolanda](https://github.com/that-yolanda)). Adds `promptSnippet` to all three (a line in the prompt's `Available tools:` section) and `promptGuidelines` to `Agent` (bullets in `Guidelines:`). The tools were always callable via the tool-call API; this only adds system-prompt reinforcement for prompt-following models. No schema or tool-call changes.
+
 ## [0.9.0] - 2026-05-30
 
 > **Heads-up — orchestrator behavior may shift.** This release substantially rewrites the `Agent` tool description and the three default-agent descriptions (`general-purpose`, `Explore`, `Plan`) to mirror Claude Code's upstream wording. No API, schema, or tool-call shape changes — purely a prompt-engineering shift, but a load-bearing one:
