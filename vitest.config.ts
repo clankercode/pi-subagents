@@ -13,6 +13,13 @@ export default defineConfig({
   // affects modules Vite resolves; without inline the runtime stays externalized).
   test: {
     server: { deps: { inline: [/@earendil-works\/pi-/] } },
+    // Cap parallelism to 2 workers. Under heavy system load, vite's SSR
+    // transforms (the inline @earendil-works packages above) can OOM/timeout
+    // and surface as a misleading `Cannot find module '.../stream'` from
+    // vitest's module-evaluator. Limiting concurrency keeps memory + transform
+    // pressure low and matches the host's 2-thread testing budget.
+    minWorkers: 1,
+    maxWorkers: 2,
   },
   resolve: { dedupe: ["@earendil-works/pi-ai"] },
 });
