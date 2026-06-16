@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatSessionTokens } from "../src/ui/agent-widget.js";
+import { formatMs, formatSessionTokens } from "../src/ui/agent-widget.js";
 
 describe("formatSessionTokens", () => {
   const theme = { fg: (c: string, s: string) => `<${c}>${s}</${c}>`, bold: (s: string) => s };
@@ -22,5 +22,26 @@ describe("formatSessionTokens", () => {
     expect(formatSessionTokens(1234, 88, theme, 4)).toBe("1.2k token (<error>88%</error> · <dim>⇊4</dim>)");
     // compactions=0 omitted
     expect(formatSessionTokens(1234, 45, theme, 0)).toBe("1.2k token (<dim>45%</dim>)");
+  });
+});
+
+describe("formatMs (humanized duration)", () => {
+  it("keeps one decimal under a minute", () => {
+    expect(formatMs(0)).toBe("0.0s");
+    expect(formatMs(12_300)).toBe("12.3s");
+    expect(formatMs(59_999)).toBe("60.0s");
+  });
+
+  it("uses m+s from one minute up to one hour", () => {
+    expect(formatMs(60_000)).toBe("1m");
+    expect(formatMs(72_000)).toBe("1m 12s");
+    expect(formatMs(723_100)).toBe("12m 3s");
+    expect(formatMs(3_599_999)).toBe("59m 59s");
+  });
+
+  it("uses h+m at one hour and above", () => {
+    expect(formatMs(3_600_000)).toBe("1h");
+    expect(formatMs(3_900_000)).toBe("1h 5m");
+    expect(formatMs(7_470_000)).toBe("2h 4m");
   });
 });

@@ -131,9 +131,22 @@ export function formatTurns(turnCount: number, maxTurns?: number | null): string
   return maxTurns != null ? `↻${turnCount}≤${maxTurns}` : `↻${turnCount}`;
 }
 
-/** Format milliseconds as human-readable duration. */
+/**
+ * Format milliseconds as a compact, humanized duration using the two largest
+ * relevant units: "12.3s", "5m 12s", "1h 5m". A bare seconds value keeps one
+ * decimal (matches the old output for sub-minute durations); larger units drop
+ * decimals so "12m 3s" never reads "12.0m 3s".
+ */
 export function formatMs(ms: number): string {
-  return `${(ms / 1000).toFixed(1)}s`;
+  if (!Number.isFinite(ms) || ms < 0) ms = 0;
+  const totalSeconds = ms / 1000;
+  if (totalSeconds < 60) return `${totalSeconds.toFixed(1)}s`;
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.floor(totalSeconds % 60);
+  if (totalMinutes < 60) return `${totalMinutes}m${seconds > 0 ? ` ${seconds}s` : ""}`;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${hours}h${minutes > 0 ? ` ${minutes}m` : ""}`;
 }
 
 /** Format duration from start/completed timestamps. */
