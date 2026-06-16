@@ -184,4 +184,23 @@ describe("Agent retry handle (recoverable invocation)", () => {
     const passedType = vi.mocked(runAgent).mock.calls.at(-1)?.[1];
     expect(String(passedType).toLowerCase()).toBe("explore");
   });
+
+  it("unknown subagent_type is a recoverable error listing valid types", async () => {
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+
+    const res = await tools.get("Agent").execute(
+      "tc1",
+      { prompt: "P", description: "d", subagent_type: "no-such-type" },
+      undefined, undefined, ctx(),
+    );
+    const out = textOf(res);
+    expect(out).toContain('Unknown agent type "no-such-type"');
+    // Lists valid types (general-purpose / Explore / Plan are defaults).
+    expect(out).toMatch(/general-purpose|Explore/);
+    // And advertises the retry handle.
+    const handle = out.match(/"retry": "([^"]+)"/)?.[1];
+    expect(handle).toBeTruthy();
+    expect(out).toMatch(/do NOT need to retype the prompt/i);
+  });
 });

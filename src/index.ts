@@ -636,7 +636,7 @@ export default function (pi: ExtensionAPI) {
     if (outcome === "aborted") {
       return `Agent is still running. The wait was cancelled by the user (parent turn aborted). The subagent was NOT stopped — it continues in the background.\nCall get_subagent_result with wait: true again to keep waiting, use peek to check progress, or omit wait to check status.`;
     }
-    return "Agent is still running. Use wait: true or check back later.";
+    return "Agent is still running. Use peek to check recent progress, wait: true to block until it finishes, or check back later.";
   }
 
   // ---- Batch tracking for smart join mode ----
@@ -1064,8 +1064,16 @@ Terse command-style prompts produce shallow, generic work.
 
       const rawType = P.subagent_type as SubagentType;
       const resolved = resolveType(rawType);
-      const subagentType = resolved ?? "general-purpose";
-      const fellBack = resolved === undefined;
+      if (!resolved) {
+        // Unknown agent type — recoverable. List valid types so the orchestrator
+        // can retry (overlaying subagent_type) without re-typing the prompt.
+        const valid = getAvailableTypes();
+        const list = valid.length > 0 ? valid.join(", ") : "(none — define one in .pi/agents/*.md)";
+        const h = stashInvocation(P, retryHandle);
+        return retryableResult(h, `Unknown agent type "${rawType}". Available types: ${list}.`);
+      }
+      const subagentType = resolved;
+      const fellBack = false;
 
       const displayName = getDisplayName(subagentType);
 
