@@ -497,7 +497,7 @@ export default function (pi: ExtensionAPI) {
   const widget = new AgentWidget(manager, agentActivity);
 
   // ---- Join mode configuration ----
-  let defaultJoinMode: JoinMode = 'smart';
+  let defaultJoinMode: JoinMode = 'async';
   function getDefaultJoinMode(): JoinMode { return defaultJoinMode; }
   function setDefaultJoinMode(mode: JoinMode) { defaultJoinMode = mode; }
 
