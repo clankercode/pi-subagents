@@ -418,6 +418,10 @@ export async function runPrintMode(options: RunPrintModeOptions): Promise<PrintM
         if (hold) {
           while (manager?.hasRunning()) {
             await manager.waitForAll();
+            // The extension debounces completion nudges (200ms) so get_subagent_result
+            // can consume the result first. Wait for that window before re-prompting
+            // so the nudge actually lands in the session under test.
+            await new Promise((r) => setTimeout(r, 300));
             await session.prompt("Background agents have completed. Process their results.");
           }
         }

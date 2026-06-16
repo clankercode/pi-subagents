@@ -52,7 +52,7 @@ const textOf = (r: any): string => r.content[0].text;
 describe("status note reaches the parent through the real handlers", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("foreground turn-limit abort → the Agent result flags an incomplete outcome", async () => {
+  it("background turn-limit abort → get_subagent_result flags an incomplete outcome", async () => {
     vi.mocked(runAgent).mockResolvedValue({
       responseText: "partial work so far",
       session: { dispose: vi.fn() } as any,
@@ -62,10 +62,16 @@ describe("status note reaches the parent through the real handlers", () => {
     const { pi, tools } = makePi();
     subagentsExtension(pi);
 
-    const res = await tools.get("Agent").execute(
+    const spawn = await tools.get("Agent").execute(
       "tc1",
       { prompt: "go", description: "d", subagent_type: "general-purpose" },
       undefined, undefined, ctx(),
+    );
+    const id = textOf(spawn).match(/Agent ID: (\S+)/)?.[1];
+    expect(id, "background spawn should surface an agent id").toBeTruthy();
+
+    const res = await tools.get("get_subagent_result").execute(
+      "tc2", { agent_id: id! }, undefined, undefined, ctx(),
     );
 
     const out = textOf(res);
