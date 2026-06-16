@@ -45,7 +45,10 @@ export interface AgentConfig {
   promptMode: "replace" | "append";
   /** Default for spawn: fork parent conversation. undefined = caller decides. */
   inheritContext?: boolean;
-  /** Default for spawn: run in background. undefined = caller decides. */
+  /** Default for spawn: run in background. undefined = caller decides.
+   *  NOTE: this fork always runs agents in the background, so a configured value
+   *  here is accepted (frontmatter/RPC) but ignored at spawn time. Kept on the
+   *  type for upstream/fixture compatibility. */
   runInBackground?: boolean;
   /** Default for spawn: no extension tools. undefined = caller decides. */
   isolated?: boolean;

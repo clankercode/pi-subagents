@@ -1154,8 +1154,6 @@ Terse command-style prompts produce shallow, generic work.
 
       const thinking = resolvedConfig.thinking;
       const inheritContext = resolvedConfig.inheritContext;
-      // All agent spawns run in the background; explicit run_in_background: false is ignored.
-      const runInBackground = true;
       const isolated = resolvedConfig.isolated;
       const isolation = resolvedConfig.isolation;
 
@@ -1173,7 +1171,6 @@ Terse command-style prompts produce shallow, generic work.
         maxTurns: normalizeMaxTurns(resolvedConfig.maxTurns),
         isolated,
         inheritContext,
-        runInBackground,
         isolation,
       };
       // Tool-result render shows the mode label too; viewer's header already does.
@@ -1284,16 +1281,16 @@ Terse command-style prompts produce shallow, generic work.
 
       // Set output file + join mode synchronously after spawn, before the
       // event loop yields — onSessionCreated is async so this is safe.
-      const joinMode = resolveJoinMode(defaultJoinMode, true);
+      const joinMode = resolveJoinMode(defaultJoinMode);
       const record = manager.getRecord(id);
-      if (record && joinMode) {
+      if (record) {
         record.joinMode = joinMode;
         record.toolCallId = toolCallId;
         record.outputFile = createOutputFilePath(ctx.cwd, id, ctx.sessionManager.getSessionId());
         writeInitialEntry(record.outputFile, id, P.prompt, ctx.cwd);
       }
 
-      if (joinMode == null || joinMode === 'async') {
+      if (joinMode === 'async') {
         // No join mode or explicit async — not part of any batch
       } else {
         // smart or group — add to current batch
