@@ -203,4 +203,52 @@ describe("Agent retry handle (recoverable invocation)", () => {
     expect(handle).toBeTruthy();
     expect(out).toMatch(/do NOT need to retype the prompt/i);
   });
+
+  it("model failure hint shows the model override, not subagent_type", async () => {
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+    const out = textOf(await tools.get("Agent").execute(
+      "tc1",
+      { prompt: "P", description: "d", subagent_type: "general-purpose", model: "nope" },
+      undefined, undefined, ctx(),
+    ));
+    expect(out).toContain('"model":');
+    expect(out).not.toContain('"subagent_type"');
+  });
+
+  it("unknown-type hint shows the subagent_type override, not model", async () => {
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+    const out = textOf(await tools.get("Agent").execute(
+      "tc1",
+      { prompt: "P", description: "d", subagent_type: "no-such-type" },
+      undefined, undefined, ctx(),
+    ));
+    expect(out).toContain('"subagent_type":');
+    expect(out).not.toContain('"model":');
+  });
+
+  it("worktree-isolation failure drops isolation from the stash and tailors the hint", async () => {
+    // /tmp is not a git repo → isolation:"worktree" makes spawn() throw, which is
+    // caught as a recoverable failure.
+    const c = ctx();
+    c.cwd = "/tmp";
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+
+    const out = textOf(await tools.get("Agent").execute(
+      "tc1",
+      { prompt: "P", description: "d", subagent_type: "general-purpose", isolation: "worktree" },
+      undefined, undefined, c,
+    ));
+    // The body explains the worktree problem.
+    expect(out).toMatch(/isolation.*worktree|not a git repo|git worktree add failed/i);
+    // The hint does NOT advertise a model/subagent_type override (irrelevant here)...
+    expect(out).not.toContain('"model":');
+    expect(out).not.toContain('"subagent_type":');
+    // ...and explains that isolation was dropped so a plain retry runs normally.
+    expect(out).toMatch(/dropped for this handle/i);
+    const handle = out.match(/"retry": "([^"]+)"/)?.[1];
+    expect(handle).toBeTruthy();
+  });
 });

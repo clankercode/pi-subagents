@@ -303,22 +303,46 @@ export default function (pi: ExtensionAPI) {
     }
   }
 
-  /** Stash an invocation (preserving a stable handle on re-stash). Returns the handle. */
-  function stashInvocation(params: Record<string, unknown>, handle?: string): string {
+  /** Stash an invocation (preserving a stable handle on re-stash). Returns the handle.
+   *  `omit` drops the given keys from the stash (used when the failing field itself
+   *  shouldn't be retried as-is — e.g. an `isolation` that just failed). */
+  function stashInvocation(
+    params: Record<string, unknown>,
+    handle?: string,
+    omit: string[] = [],
+  ): string {
     sweepRetryStash();
     const h = handle ?? `retry-${randomUUID().slice(0, 8)}`;
-    retryStash.set(h, { params: { ...params }, stashedAt: Date.now() });
+    const copy: Record<string, unknown> = { ...params };
+    for (const k of omit) delete copy[k];
+    retryStash.set(h, { params: copy, stashedAt: Date.now() });
     return h;
   }
 
-  /** Build a recoverable failure result that tells the orchestrator how to retry. */
-  function retryableResult(handle: string, body: string) {
-    return textResult(
-      `${body}\n\n` +
-      `Your prompt and settings were saved. To continue, re-invoke the Agent tool with:\n` +
-      `  { "retry": "${handle}", "model": "<a valid model from the list above>", "subagent_type": "<optional override>" }\n` +
-      `You do NOT need to retype the prompt — it is preserved by the retry handle.`,
-    );
+  /** Category of recoverable failure — drives the tailored retry hint. */
+  type RetryKind = "model" | "subagent_type" | "isolation";
+
+  /** Build a recoverable failure result whose retry hint matches the failure kind. */
+  function retryableResult(handle: string, body: string, kind: RetryKind) {
+    const tail = `\n\nYour prompt was saved — you do NOT need to retype the prompt. To continue, re-invoke the Agent tool with:`;
+    const json = `  { "retry": "${handle}"${kindOverrideSnippet(kind)}}`;
+    const isolationNote =
+      kind === "isolation"
+        ? `\n(The isolation that failed has been dropped for this handle, so retrying runs normally. If you have since fixed the repo — git init + commit — and want a worktree, add "isolation": "worktree".)`
+        : "";
+    return textResult(`${body}${tail}\n${json}${isolationNote}`);
+  }
+
+  /** The override snippet appended to the retry JSON, tailored to the failure kind. */
+  function kindOverrideSnippet(kind: RetryKind): string {
+    switch (kind) {
+      case "model":
+        return `, "model": "<a valid model from the list above>"`;
+      case "subagent_type":
+        return `, "subagent_type": "<a valid type from the list above>"`;
+      case "isolation":
+        return "";
+    }
   }
 
   // ---- Individual nudge helper (async join mode) ----
@@ -1070,7 +1094,7 @@ Terse command-style prompts produce shallow, generic work.
         const valid = getAvailableTypes();
         const list = valid.length > 0 ? valid.join(", ") : "(none — define one in .pi/agents/*.md)";
         const h = stashInvocation(P, retryHandle);
-        return retryableResult(h, `Unknown agent type "${rawType}". Available types: ${list}.`);
+        return retryableResult(h, `Unknown agent type "${rawType}". Available types: ${list}.`, "subagent_type");
       }
       const subagentType = resolved;
       const fellBack = false;
@@ -1091,7 +1115,7 @@ Terse command-style prompts produce shallow, generic work.
             // Caller-supplied model not found — stash the invocation so the
             // orchestrator can retry with a valid model without re-typing the prompt.
             const h = stashInvocation(P, retryHandle);
-            return retryableResult(h, resolved);
+            return retryableResult(h, resolved, "model");
           }
           // config-specified: silent fallback to parent
         } else {
@@ -1117,6 +1141,7 @@ Terse command-style prompts produce shallow, generic work.
             return retryableResult(
               h,
               `Model not in scope: "${resolvedConfig.modelInput}".\n\nAllowed models (from enabledModels):\n${list}`,
+              "model",
             );
           }
           // Frontmatter-pinned or parent-inherited: warn + proceed.
@@ -1253,10 +1278,11 @@ Terse command-style prompts produce shallow, generic work.
             ...bgCallbacks,
           });
         } catch (err) {
-          // Pre-spawn failure (e.g. strict worktree-isolation). Stash so the
-          // orchestrator can retry (e.g. drop isolation) without re-typing the prompt.
-          const h = stashInvocation(P, retryHandle);
-          return retryableResult(h, err instanceof Error ? err.message : String(err));
+          // Pre-spawn failure (typically strict worktree-isolation). Stash WITHOUT
+          // isolation so a plain retry safely runs normally; the tailored hint tells
+          // the orchestrator how to re-add isolation once the repo is ready.
+          const h = stashInvocation(P, retryHandle, ["isolation"]);
+          return retryableResult(h, err instanceof Error ? err.message : String(err), "isolation");
         }
 
         // Set output file + join mode synchronously after spawn, before the
