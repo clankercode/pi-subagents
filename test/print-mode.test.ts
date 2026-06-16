@@ -23,6 +23,7 @@ function makePi() {
         tools.set(tool.name, tool);
       }),
       registerCommand: vi.fn(),
+      registerShortcut: vi.fn(),
       on: vi.fn((event: string, handler: any) => {
         handlers.set(event, handler);
       }),

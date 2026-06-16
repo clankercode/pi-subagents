@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { defineTool, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext, getAgentDir, getSettingsListTheme } from "@earendil-works/pi-coding-agent";
 import { Container, Key, matchesKey, type SettingItem, SettingsList, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
+import { registerAbortResend } from "./abort-resend.js";
 import { AgentManager } from "./agent-manager.js";
 import { getAgentConversation, getDefaultMaxTurns, getGraceTurns, normalizeMaxTurns, SUBAGENT_TOOL_NAMES, setDefaultMaxTurns, setGraceTurns, steerAgent } from "./agent-runner.js";
 import { BUILTIN_TOOL_NAMES, getAgentConfig, getAllTypes, getAvailableTypes, isDefaultsDisabled, registerAgents, resolveType, setDefaultsDisabled } from "./agent-types.js";
@@ -255,6 +256,11 @@ export default function (pi: ExtensionAPI) {
 
   // Initial load
   reloadCustomAgents();
+
+  // ---- Abort + resend queued message (shift+escape) ----
+  // Escape dumps the queue into the editor; this shortcut aborts and auto-sends
+  // the queue as the next turn instead. General harness workaround.
+  registerAbortResend(pi);
 
   // ---- Agent activity tracking + widget ----
   const agentActivity = new Map<string, AgentActivity>();

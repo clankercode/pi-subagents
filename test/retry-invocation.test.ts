@@ -24,6 +24,7 @@ function makePi() {
     registerMessageRenderer: vi.fn(),
     registerTool: vi.fn((t: any) => tools.set(t.name, t)),
     registerCommand: vi.fn(),
+    registerShortcut: vi.fn(),
     on: vi.fn(),
     events: {
       emit: vi.fn(),
