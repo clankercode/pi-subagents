@@ -99,7 +99,7 @@ describe("get_subagent_result wait race", () => {
     vi.useRealTimers();
   });
 
-  it("wait:true is interrupted by the parent abort signal", async () => {
+  it("wait:true is cancelled by the user via the parent abort signal", async () => {
     const { pi, tools } = makePi();
     subagentsExtension(pi);
 
@@ -115,7 +115,7 @@ describe("get_subagent_result wait race", () => {
     const res = await waitPromise;
     const out = textOf(res);
     expect(out).toContain("still running");
-    expect(out).toMatch(/interrupted/i);
+    expect(out).toMatch(/cancelled by the user/i);
     expect(out).toContain("NOT stopped");
   });
 

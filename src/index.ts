@@ -591,7 +591,7 @@ export default function (pi: ExtensionAPI) {
       return `Agent is still running. The wait timed out after ${formatWaitTimeout(timeoutSeconds)} to avoid blocking the parent session longer than the configured limit.\nCall get_subagent_result with wait: true again to keep waiting, or omit wait to check status.`;
     }
     if (outcome === "aborted") {
-      return `Agent is still running. The wait was interrupted (the parent turn aborted). The subagent was NOT stopped.\nCall get_subagent_result with wait: true again to keep waiting, or omit wait to check status.`;
+      return `Agent is still running. The wait was cancelled by the user (parent turn aborted). The subagent was NOT stopped — it continues in the background.\nCall get_subagent_result with wait: true again to keep waiting, use peek to check progress, or omit wait to check status.`;
     }
     return "Agent is still running. Use wait: true or check back later.";
   }
