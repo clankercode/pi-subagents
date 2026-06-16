@@ -37,7 +37,6 @@ import {
   type AgentDetails,
   AgentWidget,
   buildInvocationTags,
-  describeActivity,
   formatDuration,
   formatMs,
   formatTokens,
@@ -65,7 +64,7 @@ function formatLifetimeTokens(o: { lifetimeUsage: LifetimeUsage }): string {
 
 /**
  * Create an AgentActivity state and spawn callbacks for tracking tool usage.
- * Used by both foreground and background paths to avoid duplication.
+ * Used by the background spawn path to track tool usage.
  */
 function createActivityTracker(maxTurns?: number, onStreamUpdate?: () => void) {
   const state: AgentActivity = {
@@ -1060,7 +1059,7 @@ Terse command-style prompts produce shallow, generic work.
 
     // ---- Execute ----
 
-    execute: async (toolCallId, params, signal, onUpdate, ctx) => {
+    execute: async (toolCallId, params, signal, _onUpdate, ctx) => {
       // Ensure we have UI context for widget rendering
       widget.setUICtx(ctx.ui as UICtx);
 
@@ -1097,7 +1096,6 @@ Terse command-style prompts produce shallow, generic work.
         return retryableResult(h, `Unknown agent type "${rawType}". Available types: ${list}.`, "subagent_type");
       }
       const subagentType = resolved;
-      const fellBack = false;
 
       const displayName = getDisplayName(subagentType);
 
@@ -1248,188 +1246,88 @@ Terse command-style prompts produce shallow, generic work.
       }
 
       // Background execution
-      if (runInBackground) {
-        const { state: bgState, callbacks: bgCallbacks } = createActivityTracker(effectiveMaxTurns);
+      const { state: bgState, callbacks: bgCallbacks } = createActivityTracker(effectiveMaxTurns);
 
-        // Wrap onSessionCreated to wire output file streaming.
-        // The callback lazily reads record.outputFile (set right after spawn)
-        // rather than closing over a value that doesn't exist yet.
-        let id: string;
-        const origBgOnSession = bgCallbacks.onSessionCreated;
-        bgCallbacks.onSessionCreated = (session: any) => {
-          origBgOnSession(session);
-          const rec = manager.getRecord(id);
-          if (rec?.outputFile) {
-            rec.outputCleanup = streamToOutputFile(session, rec.outputFile, id, ctx.cwd);
-          }
-        };
-
-        try {
-          id = manager.spawn(pi, ctx, subagentType, P.prompt, {
-            description: P.description,
-            model,
-            maxTurns: effectiveMaxTurns,
-            isolated,
-            inheritContext,
-            thinkingLevel: thinking,
-            isBackground: true,
-            isolation,
-            invocation: agentInvocation,
-            ...bgCallbacks,
-          });
-        } catch (err) {
-          // Pre-spawn failure (typically strict worktree-isolation). Stash WITHOUT
-          // isolation so a plain retry safely runs normally; the tailored hint tells
-          // the orchestrator how to re-add isolation once the repo is ready.
-          const h = stashInvocation(P, retryHandle, ["isolation"]);
-          return retryableResult(h, err instanceof Error ? err.message : String(err), "isolation");
-        }
-
-        // Set output file + join mode synchronously after spawn, before the
-        // event loop yields — onSessionCreated is async so this is safe.
-        const joinMode = resolveJoinMode(defaultJoinMode, true);
-        const record = manager.getRecord(id);
-        if (record && joinMode) {
-          record.joinMode = joinMode;
-          record.toolCallId = toolCallId;
-          record.outputFile = createOutputFilePath(ctx.cwd, id, ctx.sessionManager.getSessionId());
-          writeInitialEntry(record.outputFile, id, P.prompt, ctx.cwd);
-        }
-
-        if (joinMode == null || joinMode === 'async') {
-          // Foreground/no join mode or explicit async — not part of any batch
-        } else {
-          // smart or group — add to current batch
-          currentBatchAgents.push({ id, joinMode });
-          // Debounce: reset timer on each new agent so parallel tool calls
-          // dispatched across multiple event loop ticks are captured together
-          if (batchFinalizeTimer) clearTimeout(batchFinalizeTimer);
-          batchFinalizeTimer = setTimeout(finalizeBatch, 100);
-        }
-
-        agentActivity.set(id, bgState);
-        widget.ensureTimer();
-        widget.update();
-
-        // Emit created event
-        pi.events.emit("subagents:created", {
-          id,
-          type: subagentType,
-          description: P.description,
-          isBackground: true,
-        });
-
-        const isQueued = record?.status === "queued";
-        return textResult(
-          `Agent ${isQueued ? "queued" : "started"} in background.\n` +
-          `Agent ID: ${id}\n` +
-          `Type: ${displayName}\n` +
-          `Description: ${P.description}\n` +
-          (record?.outputFile ? `Output file: ${record.outputFile}\n` : "") +
-          (isQueued ? `Position: queued (max ${manager.getMaxConcurrent()} concurrent)\n` : "") +
-          `\nYou will be notified when this agent completes.\n` +
-          `Use get_subagent_result to retrieve full results, or steer_subagent to send it messages.\n` +
-          `Do not duplicate this agent's work.`,
-          { ...detailBase, toolUses: 0, tokens: "", durationMs: 0, status: "background" as const, agentId: id },
-        );
-      }
-
-      // Foreground (synchronous) execution — stream progress via onUpdate
-      let spinnerFrame = 0;
-      const startedAt = Date.now();
-      let fgId: string | undefined;
-
-      const streamUpdate = () => {
-        const details: AgentDetails = {
-          ...detailBase,
-          toolUses: fgState.toolUses,
-          tokens: formatLifetimeTokens(fgState),
-          turnCount: fgState.turnCount,
-          maxTurns: fgState.maxTurns,
-          durationMs: Date.now() - startedAt,
-          status: "running",
-          activity: describeActivity(fgState.activeTools, fgState.responseText),
-          spinnerFrame: spinnerFrame % SPINNER.length,
-        };
-        onUpdate?.({
-          content: [{ type: "text", text: `${fgState.toolUses} tool uses...` }],
-          details: details as any,
-        });
-      };
-
-      const { state: fgState, callbacks: fgCallbacks } = createActivityTracker(effectiveMaxTurns, streamUpdate);
-
-      // Wire session creation to register in widget
-      const origOnSession = fgCallbacks.onSessionCreated;
-      fgCallbacks.onSessionCreated = (session: any) => {
-        origOnSession(session);
-        for (const a of manager.listAgents()) {
-          if (a.session === session) {
-            fgId = a.id;
-            agentActivity.set(a.id, fgState);
-            widget.ensureTimer();
-            break;
-          }
+      // Wrap onSessionCreated to wire output file streaming.
+      // The callback lazily reads record.outputFile (set right after spawn)
+      // rather than closing over a value that doesn't exist yet.
+      let id: string;
+      const origBgOnSession = bgCallbacks.onSessionCreated;
+      bgCallbacks.onSessionCreated = (session: any) => {
+        origBgOnSession(session);
+        const rec = manager.getRecord(id);
+        if (rec?.outputFile) {
+          rec.outputCleanup = streamToOutputFile(session, rec.outputFile, id, ctx.cwd);
         }
       };
 
-      // Animate spinner at ~80ms (smooth rotation through 10 braille frames)
-      const spinnerInterval = setInterval(() => {
-        spinnerFrame++;
-        streamUpdate();
-      }, 80);
-
-      streamUpdate();
-
-      let record: AgentRecord;
       try {
-        record = await manager.spawnAndWait(pi, ctx, subagentType, params.prompt, {
-          description: params.description,
+        id = manager.spawn(pi, ctx, subagentType, P.prompt, {
+          description: P.description,
           model,
           maxTurns: effectiveMaxTurns,
           isolated,
           inheritContext,
           thinkingLevel: thinking,
+          isBackground: true,
           isolation,
           invocation: agentInvocation,
-          signal,
-          ...fgCallbacks,
+          ...bgCallbacks,
         });
       } catch (err) {
-        clearInterval(spinnerInterval);
-        return textResult(err instanceof Error ? err.message : String(err));
+        // Pre-spawn failure (typically strict worktree-isolation). Stash WITHOUT
+        // isolation so a plain retry safely runs normally; the tailored hint tells
+        // the orchestrator how to re-add isolation once the repo is ready.
+        const h = stashInvocation(P, retryHandle, ["isolation"]);
+        return retryableResult(h, err instanceof Error ? err.message : String(err), "isolation");
       }
 
-      clearInterval(spinnerInterval);
-
-      // Clean up foreground agent from widget
-      if (fgId) {
-        agentActivity.delete(fgId);
-        widget.markFinished(fgId);
+      // Set output file + join mode synchronously after spawn, before the
+      // event loop yields — onSessionCreated is async so this is safe.
+      const joinMode = resolveJoinMode(defaultJoinMode, true);
+      const record = manager.getRecord(id);
+      if (record && joinMode) {
+        record.joinMode = joinMode;
+        record.toolCallId = toolCallId;
+        record.outputFile = createOutputFilePath(ctx.cwd, id, ctx.sessionManager.getSessionId());
+        writeInitialEntry(record.outputFile, id, P.prompt, ctx.cwd);
       }
 
-      // Get final token count
-      const tokenText = formatLifetimeTokens(fgState);
-
-      const details = buildDetails(detailBase, record, fgState, { tokens: tokenText });
-
-      // "general-purpose" may itself be unregistered (defaults disabled, no
-      // user override) — getConfig then uses the hardcoded fallback config.
-      const fallbackNote = fellBack
-        ? `Note: Unknown agent type "${rawType}" — using ${resolveType("general-purpose") ? "general-purpose" : "the fallback agent config"}.\n\n`
-        : "";
-
-      if (record.status === "error") {
-        return textResult(`${fallbackNote}Agent failed: ${record.error}`, details);
+      if (joinMode == null || joinMode === 'async') {
+        // No join mode or explicit async — not part of any batch
+      } else {
+        // smart or group — add to current batch
+        currentBatchAgents.push({ id, joinMode });
+        // Debounce: reset timer on each new agent so parallel tool calls
+        // dispatched across multiple event loop ticks are captured together
+        if (batchFinalizeTimer) clearTimeout(batchFinalizeTimer);
+        batchFinalizeTimer = setTimeout(finalizeBatch, 100);
       }
 
-      const durationMs = (record.completedAt ?? Date.now()) - record.startedAt;
-      const statsParts = [`${record.toolUses} tool uses`];
-      if (tokenText) statsParts.push(tokenText);
+      agentActivity.set(id, bgState);
+      widget.ensureTimer();
+      widget.update();
+
+      // Emit created event
+      pi.events.emit("subagents:created", {
+        id,
+        type: subagentType,
+        description: P.description,
+        isBackground: true,
+      });
+
+      const isQueued = record?.status === "queued";
       return textResult(
-        `${fallbackNote}Agent completed in ${formatMs(durationMs)} (${statsParts.join(", ")})${getStatusNote(record.status)}.\n\n` +
-        (record.result?.trim() || "No output."),
-        details,
+        `Agent ${isQueued ? "queued" : "started"} in background.\n` +
+        `Agent ID: ${id}\n` +
+        `Type: ${displayName}\n` +
+        `Description: ${P.description}\n` +
+        (record?.outputFile ? `Output file: ${record.outputFile}\n` : "") +
+        (isQueued ? `Position: queued (max ${manager.getMaxConcurrent()} concurrent)\n` : "") +
+        `\nYou will be notified when this agent completes.\n` +
+        `Use get_subagent_result to retrieve full results, or steer_subagent to send it messages.\n` +
+        `Do not duplicate this agent's work.`,
+        { ...detailBase, toolUses: 0, tokens: "", durationMs: 0, status: "background" as const, agentId: id },
       );
     },
   }));
