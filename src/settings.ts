@@ -66,9 +66,20 @@ export interface SubagentsSettings {
    * next pi session.
    */
   toolDescriptionMode?: ToolDescriptionMode;
+  /**
+   * How long (seconds) `get_subagent_result wait:true` blocks before returning
+   * the agent's current status instead of its result. Bounds the parent turn so
+   * a long-running subagent can't wedge it indefinitely; the caller re-invokes
+   * to keep waiting. Default 270 (4m30s) to stay under the typical 5-minute LLM
+   * prompt-cache window. Range 30–3600.
+   */
+  waitTimeoutSeconds?: number;
 }
 
 export type ToolDescriptionMode = "full" | "compact" | "custom";
+
+/** Default wait timeout for `get_subagent_result wait:true` (4.5 minutes). */
+export const DEFAULT_WAIT_TIMEOUT_SECONDS = 270;
 
 /** Setter hooks used by applySettings to wire persisted values into in-memory state. */
 export interface SettingsAppliers {
@@ -80,6 +91,7 @@ export interface SettingsAppliers {
   setScopeModels: (enabled: boolean) => void;
   setDisableDefaultAgents: (b: boolean) => void;
   setToolDescriptionMode: (mode: ToolDescriptionMode) => void;
+  setWaitTimeoutSeconds: (seconds: number) => void;
 }
 
 /** Emit callback — a subset of `pi.events.emit` to keep helpers testable. */
@@ -94,6 +106,8 @@ const VALID_TOOL_DESCRIPTION_MODES: ReadonlySet<string> = new Set<ToolDescriptio
 const MAX_CONCURRENT_CEILING = 1024;
 const MAX_TURNS_CEILING = 10_000;
 const GRACE_TURNS_CEILING = 1_000;
+const WAIT_TIMEOUT_MIN = 30;
+const WAIT_TIMEOUT_MAX = 3600;
 
 /** Drop fields that don't match the expected shape. Silent — garbage becomes absent. */
 function sanitize(raw: unknown): SubagentsSettings {
@@ -135,6 +149,13 @@ function sanitize(raw: unknown): SubagentsSettings {
   }
   if (typeof r.toolDescriptionMode === "string" && VALID_TOOL_DESCRIPTION_MODES.has(r.toolDescriptionMode)) {
     out.toolDescriptionMode = r.toolDescriptionMode as ToolDescriptionMode;
+  }
+  if (
+    Number.isInteger(r.waitTimeoutSeconds) &&
+    (r.waitTimeoutSeconds as number) >= WAIT_TIMEOUT_MIN &&
+    (r.waitTimeoutSeconds as number) <= WAIT_TIMEOUT_MAX
+  ) {
+    out.waitTimeoutSeconds = r.waitTimeoutSeconds as number;
   }
   return out;
 }
@@ -194,6 +215,7 @@ export function applySettings(s: SubagentsSettings, appliers: SettingsAppliers):
   if (typeof s.scopeModels === "boolean") appliers.setScopeModels(s.scopeModels);
   if (typeof s.disableDefaultAgents === "boolean") appliers.setDisableDefaultAgents(s.disableDefaultAgents);
   if (s.toolDescriptionMode) appliers.setToolDescriptionMode(s.toolDescriptionMode);
+  if (typeof s.waitTimeoutSeconds === "number") appliers.setWaitTimeoutSeconds(s.waitTimeoutSeconds);
 }
 
 /**

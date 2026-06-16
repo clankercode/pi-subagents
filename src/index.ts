@@ -25,9 +25,10 @@ import { GroupJoinManager } from "./group-join.js";
 import { resolveAgentInvocationConfig, resolveJoinMode } from "./invocation-config.js";
 import { type ModelRegistry, resolveModel } from "./model-resolver.js";
 import { createOutputFilePath, streamToOutputFile, writeInitialEntry } from "./output-file.js";
+import { type PeekOptions, peekAgentOutput } from "./peek.js";
 import { SubagentScheduler } from "./schedule.js";
 import { resolveStorePath, ScheduleStore } from "./schedule-store.js";
-import { applyAndEmitLoaded, type SubagentsSettings, saveAndEmitChanged, type ToolDescriptionMode } from "./settings.js";
+import { applyAndEmitLoaded, DEFAULT_WAIT_TIMEOUT_SECONDS, type SubagentsSettings, saveAndEmitChanged, type ToolDescriptionMode } from "./settings.js";
 import { getStatusNote } from "./status-note.js";
 import { type AgentConfig, type AgentInvocation, type AgentRecord, type JoinMode, type NotificationDetails, type SubagentType } from "./types.js";
 import {
@@ -541,6 +542,60 @@ export default function (pi: ExtensionAPI) {
   function getToolDescriptionMode(): ToolDescriptionMode { return toolDescriptionMode; }
   function setToolDescriptionMode(mode: ToolDescriptionMode): void { toolDescriptionMode = mode; }
 
+  // ---- Wait timeout configuration ----
+  // How long get_subagent_result wait:true blocks before returning current
+  // status. Bounds the parent turn; the caller re-invokes to keep waiting.
+  let waitTimeoutSeconds = DEFAULT_WAIT_TIMEOUT_SECONDS;
+  function getWaitTimeoutSeconds(): number { return waitTimeoutSeconds; }
+  function setWaitTimeoutSeconds(seconds: number): void {
+    waitTimeoutSeconds = Math.min(3600, Math.max(30, Math.trunc(seconds)));
+  }
+
+  /** Human-readable "Xm Ys" for a duration in seconds. */
+  function formatWaitTimeout(seconds: number): string {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return m > 0 ? `${m}m${s > 0 ? ` ${s}s` : ""}` : `${s}s`;
+  }
+
+  /**
+   * Race an agent completion promise against the configured wait timeout and
+   * the parent abort signal. Resolves with the outcome. The subagent is NEVER
+   * aborted here — background agents are detached from the parent turn.
+   */
+  function raceWait(
+    promise: Promise<string>,
+    signal: AbortSignal | undefined,
+    timeoutSeconds: number,
+  ): Promise<"completed" | "timeout" | "aborted"> {
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (outcome: "completed" | "timeout" | "aborted") => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        resolve(outcome);
+      };
+      const timer = setTimeout(() => finish("timeout"), timeoutSeconds * 1000);
+      const onAbort = () => finish("aborted");
+      signal?.addEventListener("abort", onAbort, { once: true });
+      // promise always resolves (the manager maps rejections to "").
+      promise.then(() => finish("completed"));
+    });
+  }
+
+  /** Message returned when a wait ends with the agent still running. */
+  function waitTimeoutMessage(outcome: "completed" | "timeout" | "aborted", timeoutSeconds: number): string {
+    if (outcome === "timeout") {
+      return `Agent is still running. The wait timed out after ${formatWaitTimeout(timeoutSeconds)} to avoid blocking the parent session longer than the configured limit.\nCall get_subagent_result with wait: true again to keep waiting, or omit wait to check status.`;
+    }
+    if (outcome === "aborted") {
+      return `Agent is still running. The wait was interrupted (the parent turn aborted). The subagent was NOT stopped.\nCall get_subagent_result with wait: true again to keep waiting, or omit wait to check status.`;
+    }
+    return "Agent is still running. Use wait: true or check back later.";
+  }
+
   // ---- Batch tracking for smart join mode ----
   // Collects background agent IDs spawned in the current turn for smart grouping.
   // Uses a debounced timer: each new agent resets the 100ms window so that all
@@ -646,6 +701,7 @@ export default function (pi: ExtensionAPI) {
       setScopeModels: setScopeModelsEnabled,
       setDisableDefaultAgents: setDisableDefaultAgents,
       setToolDescriptionMode: setToolDescriptionMode,
+      setWaitTimeoutSeconds,
     },
     (event, payload) => pi.events.emit(event, payload),
   );
@@ -834,12 +890,12 @@ Terse command-style prompts produce shallow, generic work.
       ),
       inherit_context: Type.Optional(
         Type.Boolean({
-          description: "If true, fork parent conversation into the agent. Default: false (fresh context).",
+          description: "If true, fork the parent conversation into the agent so it sees the chat history. Recommended for questions or requests that require current context. Default: false (fresh context).",
         }),
       ),
       isolation: Type.Optional(
         Type.Literal("worktree", {
-          description: 'Set to "worktree" to run the agent in a temporary git worktree (isolated copy of the repo). Changes are saved to a branch on completion.',
+          description: 'Set to "worktree" to run the agent in a temporary git worktree that is automatically created from the current repo state at HEAD and removed on completion. Changes are saved to a branch. Requires the working directory to be a git repo with at least one commit.',
         }),
       ),
       ...scheduleParam,
@@ -1290,7 +1346,7 @@ Terse command-style prompts produce shallow, generic work.
       }),
       wait: Type.Optional(
         Type.Boolean({
-          description: "If true, wait for the agent to complete before returning. Default: false.",
+          description: `If true, block until the agent completes before returning. Blocks up to the configured wait timeout (${formatWaitTimeout(getWaitTimeoutSeconds())} by default); if the agent is still running when the timeout is reached, returns its current status — call again with wait: true to keep waiting. Interruptible by the parent turn. Default: false.`,
         }),
       ),
       verbose: Type.Optional(
@@ -1298,21 +1354,40 @@ Terse command-style prompts produce shallow, generic work.
           description: "If true, include the agent's full conversation (messages + tool calls). Default: false.",
         }),
       ),
+      peek: Type.Optional(
+        Type.Object({
+          lines: Type.Optional(Type.Number({ minimum: 1, description: "Number of trailing lines to return. Default: 20." })),
+          regex: Type.Optional(Type.String({ description: "Optional regex filter applied to each source line (filter-then-tail). Only matching lines are returned." })),
+          after: Type.Optional(Type.Number({ minimum: 0, description: "Return all source lines after this line number (1-based, matching the [N] prefixes). Use the last [N] you saw to fetch only new lines without missing anything. Overrides `lines`." })),
+        }, {
+          description: "Return a lightweight tail/filter view of the agent's result or live output file, with line numbers. Ignored when verbose is true.",
+        }),
+      ),
     }),
-    execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
+    execute: async (_toolCallId, params, signal, _onUpdate, _ctx) => {
       const record = manager.getRecord(params.agent_id);
       if (!record) {
         return textResult(`Agent not found: "${params.agent_id}". It may have been cleaned up.`);
       }
 
-      // Wait for completion if requested.
-      // Pre-mark resultConsumed BEFORE awaiting: onComplete fires inside .then()
-      // (attached earlier at spawn time) and always runs before this await resumes.
-      // Setting the flag here prevents a redundant follow-up notification.
+      // PEEK — lightweight view; ignored when verbose is true.
+      if (params.peek && !params.verbose) {
+        const peek = peekAgentOutput(record, params.peek as PeekOptions);
+        return textResult(
+          peek
+            ? `${peek.text}\n\n---\nUse verbose: true for the full conversation, or omit peek for the complete result.`
+            : "No output yet for this agent.",
+        );
+      }
+
+      // WAIT — race the agent's completion against the configured timeout and
+      // the parent abort signal. On timeout/abort we return current status
+      // WITHOUT aborting the subagent (background agents are detached).
+      let waitOutcome: "completed" | "timeout" | "aborted" = "completed";
       if (params.wait && record.status === "running" && record.promise) {
         record.resultConsumed = true;
         cancelNudge(params.agent_id);
-        await record.promise;
+        waitOutcome = await raceWait(record.promise, signal, getWaitTimeoutSeconds());
       }
 
       const displayName = getDisplayName(record.type);
@@ -1331,7 +1406,8 @@ Terse command-style prompts produce shallow, generic work.
         `Description: ${record.description}\n\n`;
 
       if (record.status === "running") {
-        output += "Agent is still running. Use wait: true or check back later.";
+        // The wait returned while the agent was still running (timeout or abort).
+        output += waitTimeoutMessage(waitOutcome, getWaitTimeoutSeconds());
       } else if (record.status === "error") {
         output += `Error: ${record.error}`;
       } else {
@@ -1818,7 +1894,7 @@ prompt_mode: <"replace" (body IS the full system prompt) or "append" (body is ap
 extensions: <true (inherit all MCP/extension tools), false (none), or comma-separated names. Default: true>
 skills: <true (inherit all), false (none), or comma-separated skill names to preload into prompt. Default: true>
 disallowed_tools: <comma-separated tool names to block, even if otherwise available. Omit for none>
-inherit_context: <true to fork parent conversation into agent so it sees chat history. Default: false>
+inherit_context: <true to fork parent conversation into agent so it sees chat history. Recommended for tasks needing current context. Default: false>
 run_in_background: <deprecated — agents always run in the background>
 isolated: <true for no extension/MCP tools, only built-in tools. Default: false>
 memory: <"user" (global), "project" (per-project), or "local" (gitignored per-project) for persistent memory. Omit for none>
@@ -1958,10 +2034,11 @@ ${systemPrompt}
       scopeModels: isScopeModelsEnabled(),
       disableDefaultAgents: isDefaultsDisabled(),
       toolDescriptionMode: getToolDescriptionMode(),
+      waitTimeoutSeconds: getWaitTimeoutSeconds(),
     };
   }
 
-  const NUMERIC_IDS = new Set(["maxConcurrent", "defaultMaxTurns", "graceTurns"]);
+  const NUMERIC_IDS = new Set(["maxConcurrent", "defaultMaxTurns", "graceTurns", "waitTimeoutSeconds"]);
 
   async function showSettings(ctx: ExtensionCommandContext) {
     function buildItems(): SettingItem[] {
@@ -2026,6 +2103,13 @@ ${systemPrompt}
           currentValue: getToolDescriptionMode(),
           values: ["full", "compact", "custom"],
         },
+        {
+          id: "waitTimeoutSeconds",
+          label: "Wait timeout",
+          description: "Seconds get_subagent_result wait:true blocks before returning status (30–3600, Enter to type)",
+          currentValue: String(getWaitTimeoutSeconds()),
+          values: [String(getWaitTimeoutSeconds())],
+        },
       ];
     }
 
@@ -2077,6 +2161,12 @@ ${systemPrompt}
       } else if (id === "toolDescriptionMode") {
         setToolDescriptionMode(value as ToolDescriptionMode);
         notifyApplied(ctx, `Tool description set to ${value}. Takes effect on next pi session.`);
+      } else if (id === "waitTimeoutSeconds") {
+        const n = parseInt(value, 10);
+        if (n >= 30 && n <= 3600) {
+          setWaitTimeoutSeconds(n);
+          notifyApplied(ctx, `Wait timeout set to ${formatWaitTimeout(n)}`);
+        }
       }
     }
 
@@ -2130,13 +2220,17 @@ ${systemPrompt}
         ? String(manager.getMaxConcurrent())
         : result === "defaultMaxTurns"
           ? String(getDefaultMaxTurns() ?? 0)
-          : String(getGraceTurns());
+          : result === "waitTimeoutSeconds"
+            ? String(getWaitTimeoutSeconds())
+            : String(getGraceTurns());
 
       const label = result === "maxConcurrent"
         ? "Max concurrency (1+)"
         : result === "defaultMaxTurns"
           ? "Default max turns (0 = unlimited)"
-          : "Grace turns (1+)";
+          : result === "waitTimeoutSeconds"
+            ? "Wait timeout seconds (30–3600)"
+            : "Grace turns (1+)";
 
       // Loop until user enters a valid integer or cancels (Esc / null).
       // Silently trims whitespace; rejects non-numeric input by re-prompting.
