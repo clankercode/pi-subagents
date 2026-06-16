@@ -10,6 +10,7 @@
  *   /agents                 — Interactive agent management menu
  */
 
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { defineTool, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext, getAgentDir, getSettingsListTheme } from "@earendil-works/pi-coding-agent";
@@ -281,6 +282,45 @@ export default function (pi: ExtensionAPI) {
     }
   }
 
+  // ---- Retry stash (recoverable Agent invocations) ----
+  // On pre-spawn validation failures (model not found / out of scope / worktree
+  // validation), the full invocation is stashed under a short handle so the
+  // orchestrator can re-invoke via { retry: "<handle>", model: "<valid>" } and
+  // pick a valid model/agent WITHOUT re-emitting the (expensive, uncached)
+  // prompt. Session-scoped: cleared on session switch/shutdown. 10-min TTL.
+  interface StashedInvocation {
+    params: Record<string, unknown>;
+    stashedAt: number;
+  }
+  const RETRY_TTL_MS = 10 * 60_000;
+  const retryStash = new Map<string, StashedInvocation>();
+
+  /** Prune expired retry handles. Called lazily on stash read/write. */
+  function sweepRetryStash() {
+    const cutoff = Date.now() - RETRY_TTL_MS;
+    for (const [h, entry] of retryStash) {
+      if (entry.stashedAt < cutoff) retryStash.delete(h);
+    }
+  }
+
+  /** Stash an invocation (preserving a stable handle on re-stash). Returns the handle. */
+  function stashInvocation(params: Record<string, unknown>, handle?: string): string {
+    sweepRetryStash();
+    const h = handle ?? `retry-${randomUUID().slice(0, 8)}`;
+    retryStash.set(h, { params: { ...params }, stashedAt: Date.now() });
+    return h;
+  }
+
+  /** Build a recoverable failure result that tells the orchestrator how to retry. */
+  function retryableResult(handle: string, body: string) {
+    return textResult(
+      `${body}\n\n` +
+      `Your prompt and settings were saved. To continue, re-invoke the Agent tool with:\n` +
+      `  { "retry": "${handle}", "model": "<a valid model from the list above>", "subagent_type": "<optional override>" }\n` +
+      `You do NOT need to retype the prompt — it is preserved by the retry handle.`,
+    );
+  }
+
   // ---- Individual nudge helper (async join mode) ----
   function emitIndividualNudge(record: AgentRecord) {
     if (record.resultConsumed) return;  // re-check at send time
@@ -460,11 +500,13 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     currentCtx = ctx;
     manager.clearCompleted();
+    retryStash.clear();
     if (isSchedulingEnabled() && !scheduler.isActive()) startScheduler(ctx);
   });
 
   pi.on("session_before_switch", () => {
     manager.clearCompleted();
+    retryStash.clear();
     scheduler.stop();
   });
 
@@ -490,6 +532,7 @@ export default function (pi: ExtensionAPI) {
     manager.abortAll();
     for (const timer of pendingNudges.values()) clearTimeout(timer);
     pendingNudges.clear();
+    retryStash.clear();
     manager.dispose();
   });
 
@@ -878,6 +921,11 @@ Terse command-style prompts produce shallow, generic work.
           description: "Deprecated. Agents always run in the background. Kept for compatibility with existing prompts.",
         }),
       ),
+      retry: Type.Optional(
+        Type.String({
+          description: "Retry handle returned by a recoverable failure (model not found / out of scope / worktree validation). Reloads your original prompt and settings so you don't retype them; pass `model` (and optionally `subagent_type`) to override what failed. Other params you pass override the stashed values.",
+        }),
+      ),
       resume: Type.Optional(
         Type.String({
           description: "Optional agent ID to resume from. Continues from previous context.",
@@ -1000,7 +1048,26 @@ Terse command-style prompts produce shallow, generic work.
       // Reload custom agents so new .pi/agents/*.md files are picked up without restart
       reloadCustomAgents();
 
-      const rawType = params.subagent_type as SubagentType;
+      // ---- Retry: reload a stashed invocation, overlaying any newly-passed params ----
+      // `P` is the effective params object used for all spawn-relevant reads below.
+      // `retryHandle` is preserved across repeated failures so one handle retries N times.
+      let retryHandle: string | undefined;
+      let P: typeof params = params;
+      if (params.retry) {
+        sweepRetryStash();
+        const stashed = retryStash.get(params.retry);
+        if (!stashed) {
+          return textResult(
+            `Retry handle "${params.retry}" was not found or has expired. ` +
+            `Re-invoke the Agent tool directly with your prompt and a valid model.`,
+          );
+        }
+        retryHandle = params.retry;
+        const { retry: _omit, ...overrides } = params;
+        P = { ...stashed.params, ...overrides } as typeof params;
+      }
+
+      const rawType = P.subagent_type as SubagentType;
       const resolved = resolveType(rawType);
       const subagentType = resolved ?? "general-purpose";
       const fellBack = resolved === undefined;
@@ -1010,14 +1077,19 @@ Terse command-style prompts produce shallow, generic work.
       // Get agent config (if any)
       const customConfig = getAgentConfig(subagentType);
 
-      const resolvedConfig = resolveAgentInvocationConfig(customConfig, params);
+      const resolvedConfig = resolveAgentInvocationConfig(customConfig, P);
 
       // Resolve model from agent config first; tool-call params only fill gaps.
       let model = ctx.model;
       if (resolvedConfig.modelInput) {
         const resolved = resolveModel(resolvedConfig.modelInput, ctx.modelRegistry);
         if (typeof resolved === "string") {
-          if (resolvedConfig.modelFromParams) return textResult(resolved);
+          if (resolvedConfig.modelFromParams) {
+            // Caller-supplied model not found — stash the invocation so the
+            // orchestrator can retry with a valid model without re-typing the prompt.
+            const h = stashInvocation(P, retryHandle);
+            return retryableResult(h, resolved);
+          }
           // config-specified: silent fallback to parent
         } else {
           model = resolved;
@@ -1038,9 +1110,10 @@ Terse command-style prompts produce shallow, generic work.
         if (allowed && !isModelInScope(model, allowed)) {
           if (resolvedConfig.modelFromParams) {
             const list = [...allowed].sort().map(m => `  ${m}`).join("\n");
-            return textResult(
-              `Model not in scope: "${resolvedConfig.modelInput}".\n\n` +
-              `Allowed models (from enabledModels):\n${list}`,
+            const h = stashInvocation(P, retryHandle);
+            return retryableResult(
+              h,
+              `Model not in scope: "${resolvedConfig.modelInput}".\n\nAllowed models (from enabledModels):\n${list}`,
             );
           }
           // Frontmatter-pinned or parent-inherited: warn + proceed.
@@ -1083,7 +1156,7 @@ Terse command-style prompts produce shallow, generic work.
       const agentTags = modeLabel ? [modeLabel, ...invocationTags] : invocationTags;
       const detailBase = {
         displayName,
-        description: params.description,
+        description: P.description,
         subagentType,
         modelName,
         tags: agentTags.length > 0 ? agentTags : undefined,
@@ -1167,8 +1240,8 @@ Terse command-style prompts produce shallow, generic work.
         };
 
         try {
-          id = manager.spawn(pi, ctx, subagentType, params.prompt, {
-            description: params.description,
+          id = manager.spawn(pi, ctx, subagentType, P.prompt, {
+            description: P.description,
             model,
             maxTurns: effectiveMaxTurns,
             isolated,
@@ -1180,7 +1253,10 @@ Terse command-style prompts produce shallow, generic work.
             ...bgCallbacks,
           });
         } catch (err) {
-          return textResult(err instanceof Error ? err.message : String(err));
+          // Pre-spawn failure (e.g. strict worktree-isolation). Stash so the
+          // orchestrator can retry (e.g. drop isolation) without re-typing the prompt.
+          const h = stashInvocation(P, retryHandle);
+          return retryableResult(h, err instanceof Error ? err.message : String(err));
         }
 
         // Set output file + join mode synchronously after spawn, before the
@@ -1191,7 +1267,7 @@ Terse command-style prompts produce shallow, generic work.
           record.joinMode = joinMode;
           record.toolCallId = toolCallId;
           record.outputFile = createOutputFilePath(ctx.cwd, id, ctx.sessionManager.getSessionId());
-          writeInitialEntry(record.outputFile, id, params.prompt, ctx.cwd);
+          writeInitialEntry(record.outputFile, id, P.prompt, ctx.cwd);
         }
 
         if (joinMode == null || joinMode === 'async') {
@@ -1213,7 +1289,7 @@ Terse command-style prompts produce shallow, generic work.
         pi.events.emit("subagents:created", {
           id,
           type: subagentType,
-          description: params.description,
+          description: P.description,
           isBackground: true,
         });
 
@@ -1222,7 +1298,7 @@ Terse command-style prompts produce shallow, generic work.
           `Agent ${isQueued ? "queued" : "started"} in background.\n` +
           `Agent ID: ${id}\n` +
           `Type: ${displayName}\n` +
-          `Description: ${params.description}\n` +
+          `Description: ${P.description}\n` +
           (record?.outputFile ? `Output file: ${record.outputFile}\n` : "") +
           (isQueued ? `Position: queued (max ${manager.getMaxConcurrent()} concurrent)\n` : "") +
           `\nYou will be notified when this agent completes.\n` +
