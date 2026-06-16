@@ -913,15 +913,19 @@ Terse command-style prompts produce shallow, generic work.
       "Trust but verify: an agent's summary describes intent, not outcome. When an agent writes or edits code, check the actual changes before reporting work as done.",
     ],
     parameters: Type.Object({
-      prompt: Type.String({
-        description: "The task for the agent to perform.",
-      }),
+      prompt: Type.Optional(
+        Type.String({
+          description: "The task for the agent to perform. OMIT this when retrying with a saved handle — it is preserved by the retry.",
+        }),
+      ),
       description: Type.String({
         description: "A short (3-5 word) description of the task (shown in UI).",
       }),
-      subagent_type: Type.String({
-        description: `The type of specialized agent to use. Available types: ${getAvailableTypes().join(", ")}. Custom agents from .pi/agents/*.md (project) or ${getAgentDir()}/agents/*.md (global) are also available.`,
-      }),
+      subagent_type: Type.Optional(
+        Type.String({
+          description: `The type of specialized agent to use. Available types: ${getAvailableTypes().join(", ")}. Custom agents from .pi/agents/*.md (project) or ${getAgentDir()}/agents/*.md (global) are also available. OMIT when retrying (preserved by the handle) unless you want to override it.`,
+        }),
+      ),
       model: Type.Optional(
         Type.String({
           description:
@@ -1085,6 +1089,15 @@ Terse command-style prompts produce shallow, generic work.
         P = { ...stashed.params, ...overrides } as typeof params;
       }
 
+      // Retry supplied the prompt/type from the stash; otherwise both are required.
+      if (!retryHandle && (!P.prompt || !P.subagent_type)) {
+        return textResult(
+          `Missing required argument${!P.prompt && !P.subagent_type ? "s" : ""}: ` +
+          [!P.prompt && "prompt", !P.subagent_type && "subagent_type"].filter(Boolean).join(", ") +
+          ".",
+        );
+      }
+
       const rawType = P.subagent_type as SubagentType;
       const resolved = resolveType(rawType);
       if (!resolved) {
@@ -1232,7 +1245,7 @@ Terse command-style prompts produce shallow, generic work.
         if (!existing.session) {
           return textResult(`Agent "${params.resume}" has no active session to resume.`);
         }
-        const record = await manager.resume(params.resume, params.prompt, signal);
+        const record = await manager.resume(params.resume, params.prompt!, signal);
         if (!record) {
           return textResult(`Failed to resume agent "${params.resume}".`);
         }
@@ -1259,7 +1272,7 @@ Terse command-style prompts produce shallow, generic work.
       };
 
       try {
-        id = manager.spawn(pi, ctx, subagentType, P.prompt, {
+        id = manager.spawn(pi, ctx, subagentType, P.prompt!, {
           description: P.description,
           model,
           maxTurns: effectiveMaxTurns,
@@ -1287,7 +1300,7 @@ Terse command-style prompts produce shallow, generic work.
         record.joinMode = joinMode;
         record.toolCallId = toolCallId;
         record.outputFile = createOutputFilePath(ctx.cwd, id, ctx.sessionManager.getSessionId());
-        writeInitialEntry(record.outputFile, id, P.prompt, ctx.cwd);
+        writeInitialEntry(record.outputFile, id, P.prompt!, ctx.cwd);
       }
 
       if (joinMode === 'async') {

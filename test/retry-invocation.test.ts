@@ -251,4 +251,15 @@ describe("Agent retry handle (recoverable invocation)", () => {
     const handle = out.match(/"retry": "([^"]+)"/)?.[1];
     expect(handle).toBeTruthy();
   });
+
+  it("missing prompt (no retry) returns a clear missing-argument error", async () => {
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+    const out = textOf(await tools.get("Agent").execute(
+      "tc1",
+      { description: "d", subagent_type: "general-purpose" } as any,
+      undefined, undefined, ctx(),
+    ));
+    expect(out).toMatch(/Missing required argument.*prompt/i);
+  });
 });
