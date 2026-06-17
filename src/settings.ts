@@ -74,6 +74,15 @@ export interface SubagentsSettings {
    * prompt-cache window. Range 30–3600.
    */
   waitTimeoutSeconds?: number;
+  /**
+   * The keyboard shortcut that aborts the current turn AND auto-sends queued
+   * message(s) as the next turn (instead of Escape, which dumps the queue back
+   * into the editor for manual re-submit). Default "f9" — a distinct key on
+   * every terminal. Override with any KeyId (e.g. "shift+escape", "f8").
+   * Read at session start; a change applies on the next pi session.
+   * The PI_ABORT_RESEND_KEY env var, if set, takes precedence over this.
+   */
+  abortResendKey?: string;
 }
 
 export type ToolDescriptionMode = "full" | "compact" | "custom";
@@ -92,6 +101,7 @@ export interface SettingsAppliers {
   setDisableDefaultAgents: (b: boolean) => void;
   setToolDescriptionMode: (mode: ToolDescriptionMode) => void;
   setWaitTimeoutSeconds: (seconds: number) => void;
+  setAbortResendKey: (key: string) => void;
 }
 
 /** Emit callback — a subset of `pi.events.emit` to keep helpers testable. */
@@ -157,6 +167,9 @@ function sanitize(raw: unknown): SubagentsSettings {
   ) {
     out.waitTimeoutSeconds = r.waitTimeoutSeconds as number;
   }
+  if (typeof r.abortResendKey === "string" && r.abortResendKey.trim() !== "") {
+    out.abortResendKey = (r.abortResendKey as string).trim();
+  }
   return out;
 }
 
@@ -216,6 +229,7 @@ export function applySettings(s: SubagentsSettings, appliers: SettingsAppliers):
   if (typeof s.disableDefaultAgents === "boolean") appliers.setDisableDefaultAgents(s.disableDefaultAgents);
   if (s.toolDescriptionMode) appliers.setToolDescriptionMode(s.toolDescriptionMode);
   if (typeof s.waitTimeoutSeconds === "number") appliers.setWaitTimeoutSeconds(s.waitTimeoutSeconds);
+  if (typeof s.abortResendKey === "string") appliers.setAbortResendKey(s.abortResendKey);
 }
 
 /**

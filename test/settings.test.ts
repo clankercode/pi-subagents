@@ -545,4 +545,50 @@ describe("settings persistence", () => {
       }
     });
   });
+
+  describe("abortResendKey", () => {
+    it("sanitize accepts a non-empty key string and trims it", () => {
+      const dir = mkdtempSync(join(tmpdir(), "pi-sub-set-"));
+      try {
+        saveSettings({ abortResendKey: "  shift+escape  " }, dir);
+        expect(loadSettings(dir).abortResendKey).toBe("shift+escape");
+        saveSettings({ abortResendKey: "f8" }, dir);
+        expect(loadSettings(dir).abortResendKey).toBe("f8");
+      } finally {
+        rmSync(dir, { force: true, recursive: true });
+      }
+    });
+    it("drops empty / non-string abortResendKey on load", () => {
+      const dir = mkdtempSync(join(tmpdir(), "pi-sub-set-"));
+      mkdirSync(join(dir, ".pi"), { recursive: true });
+      try {
+        for (const bad of ["", "   "]) {
+          writeFileSync(join(dir, ".pi", "subagents.json"), JSON.stringify({ abortResendKey: bad }));
+          expect(loadSettings(dir).abortResendKey).toBeUndefined();
+        }
+        writeFileSync(join(dir, ".pi", "subagents.json"), JSON.stringify({ abortResendKey: 42 }));
+        expect(loadSettings(dir).abortResendKey).toBeUndefined();
+      } finally {
+        rmSync(dir, { force: true, recursive: true });
+      }
+    });
+    it("applySettings calls setAbortResendKey only for a string value", () => {
+      const setAbortResendKey = vi.fn();
+      applySettings({ abortResendKey: "f9" }, { setAbortResendKey } as never);
+      expect(setAbortResendKey).toHaveBeenCalledWith("f9");
+      setAbortResendKey.mockClear();
+      applySettings({}, { setAbortResendKey } as never);
+      expect(setAbortResendKey).not.toHaveBeenCalled();
+    });
+    it("round-trips abortResendKey through save/load", () => {
+      const dir = mkdtempSync(join(tmpdir(), "pi-sub-set-"));
+      try {
+        saveSettings({ abortResendKey: "f8" }, dir);
+        const loaded = loadSettings(dir);
+        expect(loaded.abortResendKey).toBe("f8");
+      } finally {
+        rmSync(dir, { force: true, recursive: true });
+      }
+    });
+  });
 });

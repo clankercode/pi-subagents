@@ -2,21 +2,14 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { KeyId } from "@earendil-works/pi-tui";
 
 /**
- * The key that aborts the current turn AND auto-sends queued message(s) as the
- * next turn. Default: shift+escape. Override via the PI_ABORT_RESEND_KEY env var
- * (e.g. "f9") — useful if your terminal doesn't distinguish shift+escape from
- * escape.
- *
- * (Escape itself always calls restoreQueuedMessagesToEditor in core, dumping the
- * queue back into the editor for manual re-edit. This shortcut is the "I meant
- * send it" variant.)
- */
-const ABORT_RESEND_SHORTCUT: KeyId = (process.env.PI_ABORT_RESEND_KEY ?? "shift+escape") as KeyId;
-
-/**
  * Register a keyboard shortcut that aborts the current streaming turn and
  * auto-sends any queued follow-up message(s) as the next turn — instead of the
  * default Escape behavior (restore the queue into the editor for editing).
+ *
+ * Key precedence: PI_ABORT_RESEND_KEY env var > the `abortResendKey` setting >
+ * "f9" (the default — a distinct key on every terminal; shift+escape is
+ * indistinguishable from escape on terminals that don't negotiate the kitty
+ * keyboard protocol).
  *
  * This is a workaround for a core-harness behavior: Escape always calls
  * `restoreQueuedMessagesToEditor({ abort: true })`, putting queued messages back
@@ -38,8 +31,13 @@ const ABORT_RESEND_SHORTCUT: KeyId = (process.env.PI_ABORT_RESEND_KEY ?? "shift+
  *  - idle                       → no-op (preserves any editor draft)
  *  - streaming, nothing queued  → plain abort (preserves editor draft)
  *  - streaming, queued messages → abort + clear restored text + resend as followUp
+ *
+ * The shortcut is registered once at session start, so changing the setting
+ * applies on the next pi session (consistent with schedulingEnabled /
+ * toolDescriptionMode).
  */
-export function registerAbortResend(pi: ExtensionAPI): void {
+export function registerAbortResend(pi: ExtensionAPI, settingKey?: string): void {
+  const ABORT_RESEND_SHORTCUT: KeyId = (process.env.PI_ABORT_RESEND_KEY ?? settingKey ?? "f9") as KeyId;
   pi.registerShortcut(ABORT_RESEND_SHORTCUT, {
     description: "Abort current turn and auto-send queued message(s) as the next turn",
     handler: (ctx) => {
