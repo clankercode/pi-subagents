@@ -11,6 +11,7 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { SubagentScheduler } from "../schedule.js";
 import type { ScheduledSubagent } from "../types.js";
+import { menuSelect } from "./menu-select.js";
 
 /** Format an ISO timestamp as relative time ("in 4h", "2d ago", "—"). */
 function relTime(iso: string | undefined, now = Date.now()): string {
@@ -86,10 +87,10 @@ export async function showSchedulesMenu(
   }
 
   const labels = jobs.map(j => formatJob(j, scheduler));
-  const choice = await ctx.ui.select(
-    `Scheduled jobs (${jobs.length}) — select to cancel`,
-    labels,
-  );
+  const choice = await menuSelect(ctx, {
+    title: `Scheduled jobs (${jobs.length}) — select to cancel`,
+    options: labels,
+  });
   if (!choice) return;
 
   const idx = labels.indexOf(choice);

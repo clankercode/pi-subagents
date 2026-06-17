@@ -47,6 +47,7 @@ import {
   SPINNER,
   type UICtx,
 } from "./ui/agent-widget.js";
+import { menuSelect } from "./ui/menu-select.js";
 import { showSchedulesMenu } from "./ui/schedule-menu.js";
 import { addUsage, getLifetimeTotal, getSessionContextPercent, type LifetimeUsage } from "./usage.js";
 
@@ -1574,7 +1575,7 @@ Terse command-style prompts produce shallow, generic work.
       ctx.ui.notify(noAgentsMsg, "info");
     }
 
-    const choice = await ctx.ui.select("Agents", options);
+    const choice = await menuSelect(ctx, { title: "Agents", options });
     if (!choice) return;
 
     if (choice.startsWith("Running agents (")) {
@@ -1634,7 +1635,7 @@ Terse command-style prompts produce shallow, generic work.
     );
     if (legend) options.push(legend);
 
-    const choice = await ctx.ui.select("Agent types", options);
+    const choice = await menuSelect(ctx, { title: "Agent types", options });
     if (!choice) return;
 
     const agentName = choice.split(" · ")[0].replace(/^[•◦✕\s]+/, "").trim();
@@ -1657,7 +1658,7 @@ Terse command-style prompts produce shallow, generic work.
       return `${dn} (${a.description}) · ${a.toolUses} tools · ${a.status} · ${dur}`;
     });
 
-    const choice = await ctx.ui.select("Running agents", options);
+    const choice = await menuSelect(ctx, { title: "Running agents", options });
     if (!choice) return;
 
     // Find the selected agent by matching the option index
@@ -1723,7 +1724,7 @@ Terse command-style prompts produce shallow, generic work.
       menuOptions = ["Edit", "Disable", "Delete", "Back"];
     }
 
-    const choice = await ctx.ui.select(name, menuOptions);
+    const choice = await menuSelect(ctx, { title: name, options: menuOptions });
     if (!choice || choice === "Back") return;
 
     if (choice === "Edit" && file) {
@@ -1762,10 +1763,13 @@ Terse command-style prompts produce shallow, generic work.
 
   /** Eject a default agent: write its embedded config as a .md file. */
   async function ejectAgent(ctx: ExtensionCommandContext, name: string, cfg: AgentConfig) {
-    const location = await ctx.ui.select("Choose location", [
-      "Project (.pi/agents/)",
-      `Personal (${personalAgentsDir()})`,
-    ]);
+    const location = await menuSelect(ctx, {
+      title: "Choose location",
+      options: [
+        "Project (.pi/agents/)",
+        `Personal (${personalAgentsDir()})`,
+      ],
+    });
     if (!location) return;
 
     const targetDir = location.startsWith("Project") ? projectAgentsDir() : personalAgentsDir();
@@ -1824,10 +1828,13 @@ Terse command-style prompts produce shallow, generic work.
     }
 
     // No file (built-in default) — create a stub
-    const location = await ctx.ui.select("Choose location", [
-      "Project (.pi/agents/)",
-      `Personal (${personalAgentsDir()})`,
-    ]);
+    const location = await menuSelect(ctx, {
+      title: "Choose location",
+      options: [
+        "Project (.pi/agents/)",
+        `Personal (${personalAgentsDir()})`,
+      ],
+    });
     if (!location) return;
 
     const targetDir = location.startsWith("Project") ? projectAgentsDir() : personalAgentsDir();
@@ -1862,18 +1869,24 @@ Terse command-style prompts produce shallow, generic work.
   }
 
   async function showCreateWizard(ctx: ExtensionCommandContext) {
-    const location = await ctx.ui.select("Choose location", [
-      "Project (.pi/agents/)",
-      `Personal (${personalAgentsDir()})`,
-    ]);
+    const location = await menuSelect(ctx, {
+      title: "Choose location",
+      options: [
+        "Project (.pi/agents/)",
+        `Personal (${personalAgentsDir()})`,
+      ],
+    });
     if (!location) return;
 
     const targetDir = location.startsWith("Project") ? projectAgentsDir() : personalAgentsDir();
 
-    const method = await ctx.ui.select("Creation method", [
-      "Generate with Claude (recommended)",
-      "Manual configuration",
-    ]);
+    const method = await menuSelect(ctx, {
+      title: "Creation method",
+      options: [
+        "Generate with Claude (recommended)",
+        "Manual configuration",
+      ],
+    });
     if (!method) return;
 
     if (method.startsWith("Generate")) {
@@ -1966,7 +1979,10 @@ Write the file using the write tool. Only write the file, nothing else.`;
     if (!description) return;
 
     // 3. Tools
-    const toolChoice = await ctx.ui.select("Tools", ["all", "none", "read-only (read, bash, grep, find, ls)", "custom..."]);
+    const toolChoice = await menuSelect(ctx, {
+      title: "Tools",
+      options: ["all", "none", "read-only (read, bash, grep, find, ls)", "custom..."],
+    });
     if (!toolChoice) return;
 
     let tools: string;
@@ -1983,13 +1999,16 @@ Write the file using the write tool. Only write the file, nothing else.`;
     }
 
     // 4. Model
-    const modelChoice = await ctx.ui.select("Model", [
-      "inherit (parent model)",
-      "haiku",
-      "sonnet",
-      "opus",
-      "custom...",
-    ]);
+    const modelChoice = await menuSelect(ctx, {
+      title: "Model",
+      options: [
+        "inherit (parent model)",
+        "haiku",
+        "sonnet",
+        "opus",
+        "custom...",
+      ],
+    });
     if (!modelChoice) return;
 
     let modelLine = "";
@@ -2002,15 +2021,18 @@ Write the file using the write tool. Only write the file, nothing else.`;
     }
 
     // 5. Thinking
-    const thinkingChoice = await ctx.ui.select("Thinking level", [
-      "inherit",
-      "off",
-      "minimal",
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-    ]);
+    const thinkingChoice = await menuSelect(ctx, {
+      title: "Thinking level",
+      options: [
+        "inherit",
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+      ],
+    });
     if (!thinkingChoice) return;
 
     let thinkingLine = "";
@@ -2234,11 +2256,29 @@ ${systemPrompt}
         render: (w: number) => container.render(w),
         invalidate: () => container.invalidate(),
         handleInput: (data: string) => {
+          // Back out of the settings menu (left arrow mirrors Esc)
+          if (matchesKey(data, "left") || matchesKey(data, "escape")) {
+            done(undefined as undefined);
+            return;
+          }
+
           // Track navigation so Enter knows the current field
           if (matchesKey(data, "up")) {
             currentIndex = Math.max(0, currentIndex - 1);
           } else if (matchesKey(data, "down")) {
             currentIndex = Math.min(items.length - 1, currentIndex + 1);
+          }
+
+          // Right arrow selects/activates the current item, just like Enter
+          if (matchesKey(data, "right")) {
+            const item = items[currentIndex];
+            if (NUMERIC_IDS.has(item.id) || TEXT_IDS.has(item.id)) {
+              done(item.id);
+              return;
+            }
+            // For toggle items, SettingsList treats Space as activate
+            list.handleInput?.(" ");
+            return;
           }
 
           // Enter on numeric or text field → close and prompt for typed input
