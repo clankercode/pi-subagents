@@ -312,6 +312,12 @@ Settings                                    ← max concurrency, max turns, grac
 - **Create new agent** — choose project/personal location, then manual wizard (step-by-step prompts for name, tools, model, thinking, system prompt) or AI-generated (describe what the agent should do and a sub-agent writes the `.md` file). Any name is allowed, including default agent names (overrides them)
 - **Settings** — configure max concurrency, default max turns, grace turns, and join mode at runtime
 
+## Keyboard Shortcuts
+
+| Key | Action |
+|---|---|
+| **`F9`** | **Abort + resend** — aborts the current turn AND auto-sends any queued message(s) as the next turn (instead of `Esc`, which dumps the queue back into the editor for manual re-submit). Change the key under `/agents → Settings → Abort+resend key` (e.g. `f8`, `shift+escape`), or via the `PI_ABORT_RESEND_KEY` env var. Applies next session. |
+
 ## Graceful Max Turns
 
 Instead of hard-aborting at the turn limit, agents get a graceful shutdown:

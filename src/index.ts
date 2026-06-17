@@ -257,10 +257,13 @@ export default function (pi: ExtensionAPI) {
   // Initial load
   reloadCustomAgents();
 
-  // ---- Abort + resend queued message (shift+escape) ----
+  // ---- Abort + resend queued message (default F9) ----
   // Escape dumps the queue into the editor; this shortcut aborts and auto-sends
-  // the queue as the next turn instead. General harness workaround.
-  registerAbortResend(pi);
+  // the queue as the next turn instead. General harness workaround. Read at
+  // session start; the env var PI_ABORT_RESEND_KEY and the setting both override
+  // the "f9" default (env > setting > default). A setting change applies next
+  // session, like other start-time settings.
+  let abortResendKey: string | undefined;
 
   // ---- Agent activity tracking + widget ----
   const agentActivity = new Map<string, AgentActivity>();
@@ -774,9 +777,14 @@ export default function (pi: ExtensionAPI) {
       setDisableDefaultAgents: setDisableDefaultAgents,
       setToolDescriptionMode: setToolDescriptionMode,
       setWaitTimeoutSeconds,
+      setAbortResendKey: (key: string) => { abortResendKey = key; },
     },
     (event, payload) => pi.events.emit(event, payload),
   );
+
+  // Register the abort+resend shortcut AFTER settings load so the persisted
+  // key is honored (env > setting > "f9").
+  registerAbortResend(pi, abortResendKey);
 
   // ---- Agent tool ----
 
@@ -2049,10 +2057,12 @@ ${systemPrompt}
       disableDefaultAgents: isDefaultsDisabled(),
       toolDescriptionMode: getToolDescriptionMode(),
       waitTimeoutSeconds: getWaitTimeoutSeconds(),
+      abortResendKey: abortResendKey,
     };
   }
 
   const NUMERIC_IDS = new Set(["maxConcurrent", "defaultMaxTurns", "graceTurns", "waitTimeoutSeconds"]);
+  const TEXT_IDS = new Set(["abortResendKey"]);
 
   async function showSettings(ctx: ExtensionCommandContext) {
     function buildItems(): SettingItem[] {
@@ -2124,6 +2134,13 @@ ${systemPrompt}
           currentValue: String(getWaitTimeoutSeconds()),
           values: [String(getWaitTimeoutSeconds())],
         },
+        {
+          id: "abortResendKey",
+          label: "Abort+resend key",
+          description: "Key that aborts the current turn AND auto-sends queued message(s) as the next turn (vs Escape, which restores the queue to the editor). Default f9. Enter to type (e.g. f8, shift+escape). Applies next session.",
+          currentValue: abortResendKey ?? "f9",
+          values: [abortResendKey ?? "f9"],
+        },
       ];
     }
 
@@ -2181,6 +2198,12 @@ ${systemPrompt}
           setWaitTimeoutSeconds(n);
           notifyApplied(ctx, `Wait timeout set to ${formatWaitTimeout(n)}`);
         }
+      } else if (id === "abortResendKey") {
+        const key = value.trim();
+        if (key) {
+          abortResendKey = key;
+          notifyApplied(ctx, `Abort+resend key set to ${key}. Takes effect on next pi session.`);
+        }
       }
     }
 
@@ -2218,8 +2241,8 @@ ${systemPrompt}
             currentIndex = Math.min(items.length - 1, currentIndex + 1);
           }
 
-          // Enter on numeric field → close and prompt for typed input
-          if (matchesKey(data, Key.enter) && NUMERIC_IDS.has(items[currentIndex].id)) {
+          // Enter on numeric or text field → close and prompt for typed input
+          if (matchesKey(data, Key.enter) && (NUMERIC_IDS.has(items[currentIndex].id) || TEXT_IDS.has(items[currentIndex].id))) {
             done(items[currentIndex].id);
             return;
           }
@@ -2259,6 +2282,15 @@ ${systemPrompt}
         }
         // Invalid — re-prompt with the user's last entry so they can edit it
         input = await ctx.ui.input(label, trimmed);
+      }
+    } else if (result && TEXT_IDS.has(result)) {
+      // Free-form text field (e.g. a key id). Prompt once; apply if non-empty.
+      const current = result === "abortResendKey" ? (abortResendKey ?? "f9") : "";
+      const label = "Abort+resend key (e.g. f9, f8, shift+escape)";
+      const input = await ctx.ui.input(label, current);
+      if (input != null && input.trim() !== "") {
+        applyValue(result, input.trim());
+        await showSettings(ctx);
       }
     }
   }
