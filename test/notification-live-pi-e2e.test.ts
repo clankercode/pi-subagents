@@ -4,6 +4,9 @@
  * These call the local `pi --list-models` CLI to discover the requested
  * Minimax M2.7 highspeed model, then drive the real print-mode runner against
  * that model. They are skipped unless PI_E2E_LIVE=1 and the model is available.
+ *
+ * Run the live path from the repo root with:
+ * PATH="$PWD/node_modules/.bin:$PATH" PI_E2E_LIVE=1 npm test -- test/notification-live-pi-e2e.test.ts
  */
 import { spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
