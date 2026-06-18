@@ -35,7 +35,7 @@ export async function menuSelect(
   return ctx.ui.custom<string | undefined>((_tui, theme, _kb, done) => {
     const list = new SelectList(
       items,
-      opts.maxVisible ?? Math.max(5, items.length + 2),
+      opts.maxVisible ?? items.length,
       getSelectListTheme(),
     );
     list.onSelect = (item) => done(item.value);
