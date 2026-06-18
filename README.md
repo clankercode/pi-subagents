@@ -241,6 +241,7 @@ A few rules the examples don't make obvious:
 
 - `extensions:` is the sole loading authority. `ext:foo` in `tools:` narrows what surfaces; it can't load `foo` on its own. Mismatches fire `extension-error:…` warnings.
 - Any `ext:` entry flips extension tools to an explicit allowlist — unnamed extensions still load (handlers fire) but expose no tools. So `tools: "*, ext:mcp/search"` exposes only `search` from `mcp`, nothing from any other extension.
+- `pi-c2c` is the one built-in exception to that opt-in flip: when it is loaded for a non-isolated subagent, all of its tools surface automatically so the child can register and message its parent without `tools: ext:pi-c2c`. `isolated: true`, `extensions: false`, `exclude_extensions: pi-c2c`, and `disallowed_tools` still suppress it.
 - Extension names match case-insensitively (`[Mcp]` = `[mcp]`); tool names in `ext:foo/bar` stay case-sensitive.
 - Plain `tools:` typos fail loudly: `tools: reed, grep` fires `tools-error:…` instead of silently producing an under-tooled agent.
 - `exclude_extensions:` wins over `extensions:` and over `ext:` selectors — an excluded extension never loads and a `tools: ext:` entry can't pull it back. Plain names only (no paths, no `*`); a name matching nothing fires an `extension-error:…` warning.

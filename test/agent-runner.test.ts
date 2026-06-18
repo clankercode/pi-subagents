@@ -1,10 +1,12 @@
 import { homedir } from "node:os";
+import { resolve } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   createAgentSession,
   defaultResourceLoaderCtor,
   loaderExtensionsRef,
+  reloadHookRef,
   getAgentDir,
   sessionManagerInMemory,
   settingsManagerCreate,
@@ -17,6 +19,9 @@ const {
       errors: Array<{ path: string; error: string }>;
       runtime: Record<string, unknown>;
     },
+  },
+  reloadHookRef: {
+    current: undefined as undefined | (() => Promise<void> | void),
   },
   getAgentDir: vi.fn(() => "/mock/agent-dir"),
   sessionManagerInMemory: vi.fn(() => ({ kind: "memory-session-manager" })),
@@ -36,6 +41,7 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
     }
 
     async reload() {
+      await reloadHookRef.current?.();
       // Mirror the real loader: `noExtensions: true` zeros out the discovered set
       // entirely. Otherwise tests pre-register the extensions a path should
       // resolve to; an unregistered path simply yields no extension (a failed load).
@@ -151,6 +157,7 @@ beforeEach(() => {
   sessionManagerInMemory.mockClear();
   settingsManagerCreate.mockClear();
   loaderExtensionsRef.current = { extensions: [], errors: [], runtime: {} };
+  reloadHookRef.current = undefined;
 });
 
 describe("agent-runner final output capture", () => {
@@ -493,7 +500,7 @@ function withExtensions(spec: Record<string, string[]>) {
 }
 
 function lastToolsPassed(): string[] {
-  return createAgentSession.mock.calls[0][0].tools;
+  return createAgentSession.mock.calls.at(-1)?.[0].tools ?? [];
 }
 
 function lastLoaderOpts(): Record<string, unknown> {
@@ -552,7 +559,26 @@ describe("agent-runner master tool allowlist", () => {
     expect(tools).toContain("read");
   });
 
-  it("EXCLUDED_TOOL_NAMES never reach the allowlist even if an extension registers them", async () => {
+  it("recursive subagent tools reach the allowlist below the max depth", async () => {
+    vi.mocked(getConfig).mockReturnValueOnce(makeConfig({ extensions: true }));
+    vi.mocked(getAgentConfig).mockReturnValueOnce(makeAgentConfig({ extensions: true }));
+    vi.mocked(getToolNamesForType).mockReturnValueOnce(BUILTINS_7);
+    withExtensions({
+      "/ext/subagents.ts": ["Agent", "get_subagent_result", "steer_subagent", "ok_ext"],
+    });
+    const { session } = createSession("OK");
+    createAgentSession.mockResolvedValue({ session });
+
+    await runAgent(ctx, "Explore", "go", { pi, depth: 3 });
+
+    const tools = lastToolsPassed();
+    expect(tools).toContain("Agent");
+    expect(tools).toContain("get_subagent_result");
+    expect(tools).toContain("steer_subagent");
+    expect(tools).toContain("ok_ext");
+  });
+
+  it("recursive subagent tools are excluded at the max depth", async () => {
     vi.mocked(getConfig).mockReturnValueOnce(makeConfig({ extensions: true }));
     vi.mocked(getAgentConfig).mockReturnValueOnce(makeAgentConfig({ extensions: true }));
     vi.mocked(getToolNamesForType).mockReturnValueOnce(BUILTINS_7);
@@ -562,7 +588,7 @@ describe("agent-runner master tool allowlist", () => {
     const { session } = createSession("OK");
     createAgentSession.mockResolvedValue({ session });
 
-    await runAgent(ctx, "Explore", "go", { pi });
+    await runAgent(ctx, "Explore", "go", { pi, depth: 4 });
 
     const tools = lastToolsPassed();
     expect(tools).not.toContain("Agent");
@@ -600,6 +626,130 @@ describe("agent-runner master tool allowlist", () => {
     await runAgent(ctx, "Explore", "go", { pi });
 
     expect(session.setActiveToolsByName).not.toHaveBeenCalled();
+  });
+});
+
+describe("agent-runner pi-c2c auto-exposure", () => {
+  function setupAgent(overrides: Record<string, unknown>) {
+    vi.mocked(getConfig).mockReturnValueOnce(makeConfig(overrides));
+    vi.mocked(getAgentConfig).mockReturnValueOnce(makeAgentConfig(overrides));
+    vi.mocked(getToolNamesForType).mockReturnValueOnce(["read"]);
+  }
+
+  it("loaded pi-c2c tools are allowed for non-isolated agents without ext:pi-c2c", async () => {
+    setupAgent({ extensions: true });
+    withExtensions({
+      "/ext/pi-c2c.ts": ["c2c_pi_send", "c2c_pi_whoami"],
+      "/ext/other.ts": ["other_tool"],
+    });
+    const { session } = createSession("OK");
+    createAgentSession.mockResolvedValue({ session });
+
+    await runAgent(ctx, "Explore", "go", { pi });
+
+    const tools = lastToolsPassed();
+    expect(tools).toContain("c2c_pi_send");
+    expect(tools).toContain("c2c_pi_whoami");
+    expect(tools).toContain("other_tool");
+  });
+
+  it("pi-c2c still surfaces when ext selectors narrow other extensions", async () => {
+    setupAgent({ extensions: true, extSelectors: ["ext:mcp/search"] });
+    withExtensions({
+      "/ext/pi-c2c.ts": ["c2c_pi_send"],
+      "/ext/mcp.ts": ["search", "other_mcp"],
+      "/ext/other.ts": ["other_tool"],
+    });
+    const { session } = createSession("OK");
+    createAgentSession.mockResolvedValue({ session });
+
+    await runAgent(ctx, "Explore", "go", { pi });
+
+    const tools = lastToolsPassed();
+    expect(tools).toContain("c2c_pi_send");
+    expect(tools).toContain("search");
+    expect(tools).not.toContain("other_mcp");
+    expect(tools).not.toContain("other_tool");
+  });
+
+  it("recognizes pi-c2c by package name when loaded from its src/index.ts entrypoint", async () => {
+    setupAgent({ extensions: true, extSelectors: ["ext:mcp/search"] });
+    withExtensions({
+      [resolve("../pi-c2c/src/index.ts")]: ["c2c_pi_send"],
+      "/ext/mcp.ts": ["search"],
+    });
+    const { session } = createSession("OK");
+    createAgentSession.mockResolvedValue({ session });
+
+    await runAgent(ctx, "Explore", "go", { pi });
+
+    const tools = lastToolsPassed();
+    expect(tools).toContain("c2c_pi_send");
+    expect(tools).toContain("search");
+  });
+
+  it("isolated and extensions:false suppress pi-c2c tools", async () => {
+    setupAgent({ extensions: true });
+    withExtensions({ "/ext/pi-c2c.ts": ["c2c_pi_send"] });
+    const first = createSession("OK");
+    createAgentSession.mockResolvedValueOnce({ session: first.session });
+    await runAgent(ctx, "Explore", "go", { pi, isolated: true });
+    expect(lastToolsPassed()).not.toContain("c2c_pi_send");
+
+    setupAgent({ extensions: false });
+    withExtensions({ "/ext/pi-c2c.ts": ["c2c_pi_send"] });
+    const second = createSession("OK");
+    createAgentSession.mockResolvedValueOnce({ session: second.session });
+    await runAgent(ctx, "Explore", "go", { pi });
+    expect(lastToolsPassed()).not.toContain("c2c_pi_send");
+  });
+
+  it("exclude_extensions and disallowed_tools can suppress pi-c2c tools", async () => {
+    setupAgent({ extensions: true, excludeExtensions: ["pi-c2c"] });
+    withExtensions({ "/ext/pi-c2c.ts": ["c2c_pi_send"], "/ext/mcp.ts": ["mcp_tool"] });
+    const first = createSession("OK");
+    createAgentSession.mockResolvedValueOnce({ session: first.session });
+    await runAgent(ctx, "Explore", "go", { pi });
+    expect(lastToolsPassed()).not.toContain("c2c_pi_send");
+
+    setupAgent({ extensions: true, disallowedTools: ["c2c_pi_send"] });
+    withExtensions({ "/ext/pi-c2c.ts": ["c2c_pi_send", "c2c_pi_whoami"] });
+    const second = createSession("OK");
+    createAgentSession.mockResolvedValueOnce({ session: second.session });
+    await runAgent(ctx, "Explore", "go", { pi });
+    const tools = lastToolsPassed();
+    expect(tools).not.toContain("c2c_pi_send");
+    expect(tools).toContain("c2c_pi_whoami");
+  });
+});
+
+describe("agent-runner extension load depth hint", () => {
+  it("serializes extension reloads so process-global subagent hints cannot overlap", async () => {
+    vi.mocked(getConfig).mockReturnValue(makeConfig({ extensions: true }));
+    vi.mocked(getAgentConfig).mockReturnValue(makeAgentConfig({ extensions: true }));
+    vi.mocked(getToolNamesForType).mockReturnValue(["read"]);
+    withExtensions({ "/ext/pi-c2c.ts": ["c2c_pi_whoami"] });
+    const first = createSession("A");
+    const second = createSession("B");
+    createAgentSession
+      .mockResolvedValueOnce({ session: first.session })
+      .mockResolvedValueOnce({ session: second.session });
+
+    let activeReloads = 0;
+    let maxActiveReloads = 0;
+    reloadHookRef.current = async () => {
+      activeReloads++;
+      maxActiveReloads = Math.max(maxActiveReloads, activeReloads);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      activeReloads--;
+    };
+
+    await Promise.all([
+      runAgent(ctx, "Explore", "go-a", { pi, agentId: "A#1" }),
+      runAgent(ctx, "Explore", "go-b", { pi, agentId: "B#2" }),
+    ]);
+
+    expect(maxActiveReloads).toBe(1);
   });
 });
 

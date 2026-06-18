@@ -3,7 +3,8 @@
  */
 
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type { Model } from "@earendil-works/pi-ai";
 import type { ExtensionContext, LoadExtensionsResult } from "@earendil-works/pi-coding-agent";
 import {
@@ -23,7 +24,7 @@ import { detectEnv } from "./env.js";
 import { buildMemoryBlock, buildReadOnlyMemoryBlock } from "./memory.js";
 import { buildAgentPrompt, type PromptExtras } from "./prompts.js";
 import { preloadSkills } from "./skill-loader.js";
-import type { SubagentType, ThinkingLevel } from "./types.js";
+import { MAX_RECURSIVE_DEPTH, type SubagentType, type ThinkingLevel } from "./types.js";
 
 /**
  * Tool names registered by THIS extension. Single source of truth so the
@@ -37,8 +38,56 @@ export const SUBAGENT_TOOL_NAMES = {
   STEER: "steer_subagent",
 } as const;
 
-/** Names of tools registered by this extension that subagents must NOT inherit. */
-const EXCLUDED_TOOL_NAMES: string[] = Object.values(SUBAGENT_TOOL_NAMES);
+/** Names of tools registered by this extension that are gated by recursive depth. */
+const RECURSIVE_TOOL_NAMES: string[] = Object.values(SUBAGENT_TOOL_NAMES);
+
+const EXTENSION_DEPTH_KEY = Symbol.for("pi-subagents:extension-depth");
+const AUTO_EXPOSE_EXTENSION_NAMES = new Set(["pi-c2c"]);
+let extensionDepthLoadChain: Promise<void> = Promise.resolve();
+const packageNameCache = new Map<string, string[]>();
+
+function getLoadingExtensionDepth(): number {
+  const value = (globalThis as any)[EXTENSION_DEPTH_KEY];
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (value && typeof value.depth === "number" && Number.isFinite(value.depth)) return value.depth;
+  return 0;
+}
+
+function getLoadingExtensionAgentId(): string | undefined {
+  const value = (globalThis as any)[EXTENSION_DEPTH_KEY];
+  return value && typeof value.agentId === "string" ? value.agentId : undefined;
+}
+
+async function withLoadingExtensionDepth<T>(depth: number, agentId: string | undefined, fn: () => Promise<T>): Promise<T> {
+  const previous = extensionDepthLoadChain;
+  let release!: () => void;
+  extensionDepthLoadChain = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  await previous;
+  try {
+    const g = globalThis as any;
+    const prev = g[EXTENSION_DEPTH_KEY];
+    g[EXTENSION_DEPTH_KEY] = { depth, agentId };
+    try {
+      return await fn();
+    } finally {
+      if (prev === undefined) delete g[EXTENSION_DEPTH_KEY];
+      else g[EXTENSION_DEPTH_KEY] = prev;
+    }
+  } finally {
+    release();
+  }
+}
+
+export function getCurrentExtensionDepth(): number {
+  return getLoadingExtensionDepth();
+}
+
+export function getCurrentExtensionAgentId(): string | undefined {
+  return getLoadingExtensionAgentId();
+}
 
 /**
  * Canonical name of an extension for `extensions: [...]` allowlist matching.
@@ -53,6 +102,58 @@ export function extensionCanonicalName(extPath: string): string {
     ? basename(dirname(extPath))
     : base.replace(/\.(ts|js)$/, "");
   return name.toLowerCase();
+}
+
+function packageNameCandidates(name: string): string[] {
+  const lower = name.toLowerCase();
+  const slash = lower.lastIndexOf("/");
+  return slash === -1 ? [lower] : [lower, lower.slice(slash + 1)];
+}
+
+function extensionMatchNames(extPath: string): Set<string> {
+  const names = new Set([extensionCanonicalName(extPath)]);
+  const packageNames = packageNameCache.get(extPath);
+  if (packageNames) {
+    for (const name of packageNames) names.add(name);
+    return names;
+  }
+
+  const found: string[] = [];
+  let dir = dirname(extPath);
+  while (dir && dir !== dirname(dir)) {
+    const packageJson = join(dir, "package.json");
+    if (existsSync(packageJson)) {
+      try {
+        const parsed = JSON.parse(readFileSync(packageJson, "utf8"));
+        if (typeof parsed.name === "string" && parsed.name.trim()) {
+          found.push(...packageNameCandidates(parsed.name.trim()));
+        }
+      } catch {
+        // Ignore malformed package metadata; path-based canonicalization remains.
+      }
+      break;
+    }
+    dir = dirname(dir);
+  }
+
+  packageNameCache.set(extPath, found);
+  for (const name of found) names.add(name);
+  return names;
+}
+
+function extensionMatchesName(extPath: string, names: Set<string>): boolean {
+  if (names.size === 0) return false;
+  for (const candidate of extensionMatchNames(extPath)) {
+    if (names.has(candidate)) return true;
+  }
+  return false;
+}
+
+function extensionMatchingSelector(extPath: string, selectors: Set<string>): string | undefined {
+  for (const candidate of extensionMatchNames(extPath)) {
+    if (selectors.has(candidate)) return candidate;
+  }
+  return undefined;
 }
 
 /**
@@ -238,6 +339,10 @@ export interface RunOptions {
    * pre-compaction context size estimate. Aborted compactions don't fire.
    */
   onCompaction?: (info: { reason: "manual" | "threshold" | "overflow"; tokensBefore: number }) => void;
+  /** Recursive subagent depth. Parent/orchestrator is 0; spawned agents are 1..4. */
+  depth?: number;
+  /** Parent subagent id when spawned recursively from another subagent. */
+  parentAgentId?: string;
 }
 
 export interface RunResult {
@@ -309,7 +414,13 @@ export async function runAgent(
   const parentSystemPrompt = ctx.getSystemPrompt();
 
   // Build prompt extras (memory, skill preloading)
-  const extras: PromptExtras = {};
+  const depth = options.depth ?? 1;
+  const extras: PromptExtras = {
+    agentId: options.agentId,
+    parentAgentId: options.parentAgentId,
+    depth,
+    maxDepth: MAX_RECURSIVE_DEPTH,
+  };
 
   // Resolve extensions/skills: isolated overrides to false
   const extensions = options.isolated ? false : config.extensions;
@@ -412,13 +523,12 @@ export async function runAgent(
     noExtensions || (loadAll && !hasExcludes)
       ? undefined
       : (base) => {
-          discoveredNames = new Set(base.extensions.map((e) => extensionCanonicalName(e.path)));
+          discoveredNames = new Set(base.extensions.flatMap((e) => Array.from(extensionMatchNames(e.path))));
           return {
             ...base,
             extensions: base.extensions.filter((e) => {
-              const name = extensionCanonicalName(e.path);
-              if (excludeNames.has(name)) return false; // exclude wins
-              return loadAll || keepNames.has(name);
+              if (extensionMatchesName(e.path, excludeNames)) return false; // exclude wins
+              return loadAll || extensionMatchesName(e.path, keepNames);
             }),
           };
         };
@@ -436,7 +546,7 @@ export async function runAgent(
     systemPromptOverride: () => systemPrompt,
     appendSystemPromptOverride: () => [],
   });
-  await loader.reload();
+  await withLoadingExtensionDepth(depth, options.agentId, () => loader.reload());
 
   // Plain entries in `tools:` are expected to be built-in names (extension tools
   // go through `ext:`), so an unknown name there is unambiguously a typo. Previously
@@ -485,7 +595,7 @@ export async function runAgent(
   }
   if (keepNames.size > 0 || extNames.size > 0) {
     const survivingNames = new Set(
-      loader.getExtensions().extensions.map((e) => extensionCanonicalName(e.path)),
+      loader.getExtensions().extensions.flatMap((e) => Array.from(extensionMatchNames(e.path))),
     );
     for (const name of keepNames) {
       if (!survivingNames.has(name)) {
@@ -530,11 +640,12 @@ export async function runAgent(
   if (!noExtensions) {
     const optInActive = extNames.size > 0;
     for (const extension of loader.getExtensions().extensions) {
-      const canon = extensionCanonicalName(extension.path);
-      if (optInActive && !extNames.has(canon)) continue;
-      const narrowed = narrowing.get(canon);
+      const selectorName = extensionMatchingSelector(extension.path, extNames);
+      const autoExpose = extensionMatchesName(extension.path, AUTO_EXPOSE_EXTENSION_NAMES);
+      if (optInActive && !selectorName && !autoExpose) continue;
+      const narrowed = selectorName ? narrowing.get(selectorName) : undefined;
       for (const toolName of extension.tools.keys()) {
-        if (narrowed && !narrowed.has(toolName)) continue;
+        if (!autoExpose && narrowed && !narrowed.has(toolName)) continue;
         extensionToolNames.push(toolName);
       }
     }
@@ -546,7 +657,7 @@ export async function runAgent(
   // scoped from the first instant — no post-construction narrowing required.
   const builtinToolNameSet = new Set(toolNames);
   const allowedTools = [...toolNames, ...extensionToolNames].filter((t) => {
-    if (EXCLUDED_TOOL_NAMES.includes(t)) return false;
+    if (RECURSIVE_TOOL_NAMES.includes(t) && depth >= MAX_RECURSIVE_DEPTH) return false;
     if (disallowedSet?.has(t)) return false;
     if (builtinToolNameSet.has(t)) return true;
     // Reached only for extension tools. The extension set was already filtered
