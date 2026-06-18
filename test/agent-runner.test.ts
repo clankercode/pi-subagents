@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -629,7 +630,9 @@ describe("agent-runner master tool allowlist", () => {
   });
 });
 
-describe("agent-runner pi-c2c auto-exposure", () => {
+describe.skipIf(!existsSync(resolve("../pi-c2c/src/index.ts")))(
+  "agent-runner pi-c2c auto-exposure",
+  () => {
   function setupAgent(overrides: Record<string, unknown>) {
     vi.mocked(getConfig).mockReturnValueOnce(makeConfig(overrides));
     vi.mocked(getAgentConfig).mockReturnValueOnce(makeAgentConfig(overrides));
