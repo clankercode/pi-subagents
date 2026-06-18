@@ -724,6 +724,28 @@ describe("AgentManager — hasRunning", () => {
   });
 });
 
+describe("AgentManager — recursive depth guard", () => {
+  let manager: AgentManager;
+  afterEach(() => manager?.dispose());
+
+  it("rejects spawns at max recursive depth before creating a record", () => {
+    manager = new AgentManager();
+    resolvedRun();
+    const callsBefore = vi.mocked(runAgent).mock.calls.length;
+
+    expect(() =>
+      manager.spawn(mockPi, mockCtx, "general-purpose", "test", {
+        description: "too deep",
+        isBackground: true,
+        depth: 5,
+      }),
+    ).toThrow(/maximum recursive subagent depth/i);
+
+    expect(manager.listAgents()).toEqual([]);
+    expect(vi.mocked(runAgent).mock.calls.length).toBe(callsBefore);
+  });
+});
+
 describe("AgentManager — runAgent rejection leaves the record visible with error status", () => {
   let manager: AgentManager;
   afterEach(() => manager?.dispose());

@@ -14,6 +14,9 @@ export type SubagentType = string;
 /** Names of the three embedded default agents. */
 export const DEFAULT_AGENT_NAMES = ["general-purpose", "Explore", "Plan"] as const;
 
+/** Maximum recursive subagent depth. Parent/orchestrator is depth 0; agents may run at depths 1..4. */
+export const MAX_RECURSIVE_DEPTH = 4;
+
 /** Memory scope for persistent agent memory. */
 export type MemoryScope = "user" | "project" | "local";
 
@@ -91,6 +94,10 @@ export interface AgentRecord {
   worktreeResult?: { hasChanges: boolean; branch?: string };
   /** The tool_use_id from the original Agent tool call. */
   toolCallId?: string;
+  /** Recursive subagent depth. Parent/orchestrator is 0; spawned agents are 1..4. */
+  depth: number;
+  /** Parent subagent id when spawned recursively from another subagent. */
+  parentAgentId?: string;
   /** Path to the streaming output transcript file. */
   outputFile?: string;
   /** Cleanup function for the output file stream subscription. */
@@ -116,6 +123,9 @@ export interface AgentInvocation {
   inheritContext?: boolean;
   runInBackground?: boolean;
   isolation?: IsolationMode;
+  depth?: number;
+  parentAgentId?: string;
+  maxDepth?: number;
 }
 
 /** Details attached to custom notification messages for visual rendering. */

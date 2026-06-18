@@ -10,6 +10,23 @@ export interface PromptExtras {
   memoryBlock?: string;
   /** Preloaded skill contents to inject. */
   skillBlocks?: { name: string; content: string }[];
+  /** Manager-assigned agent id, used for recursive subagent metadata. */
+  agentId?: string;
+  /** Parent subagent id when this agent was spawned recursively. */
+  parentAgentId?: string;
+  /** Recursive subagent depth. */
+  depth?: number;
+  /** Maximum recursive subagent depth. */
+  maxDepth?: number;
+}
+
+function xmlAttr(value: string | number | undefined): string | undefined {
+  if (value == null) return undefined;
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 /**
@@ -36,7 +53,20 @@ export function buildAgentPrompt(
   parentSystemPrompt?: string,
   extras?: PromptExtras,
 ): string {
-  const activeAgentTag = `<active_agent name="${config.name}"/>\n\n`;
+  const activeAgentAttrs = [
+    ["name", config.name],
+    ["agent_id", extras?.agentId],
+    ["parent_agent_id", extras?.parentAgentId],
+    ["depth", extras?.depth],
+    ["max_depth", extras?.maxDepth],
+  ]
+    .map(([name, value]) => {
+      const escaped = xmlAttr(value);
+      return escaped == null ? undefined : `${name}="${escaped}"`;
+    })
+    .filter(Boolean)
+    .join(" ");
+  const activeAgentTag = `<active_agent ${activeAgentAttrs}/>\n\n`;
 
   const envBlock = `# Environment
 Working directory: ${cwd}

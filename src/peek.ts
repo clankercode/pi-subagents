@@ -81,7 +81,7 @@ function readSourceLines(record: AgentRecord): string[] {
   if (isRunning && outputFileLines.length > 0) return outputFileLines;
 
   // Finished (or no live file): prefer the clean result text.
-  if (record.result && record.result.trim()) {
+  if (record.result?.trim()) {
     return record.result.split("\n");
   }
 

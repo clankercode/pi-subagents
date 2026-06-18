@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Recursive subagents to depth 4** — subagents can now receive `Agent`, `get_subagent_result`, and `steer_subagent` tools until recursive depth 4. The active-agent prompt tag, lifecycle events, and UI invocation tags expose depth metadata so parent/child relationships are visible.
+- **Activity-age display** — the live Agents widget shows how long the current activity description has been unchanged, making stalled-looking agents easier to spot.
+
+### Changed
+- **Background completion notifications use steering-style delivery** — completion notifications now use `deliverAs: "steer"` with `triggerTurn: true`, so busy parents receive them like steering messages and idle parents still start a follow-up turn automatically.
+- **Agent instructions push backgrounding harder** — full, compact, and custom-template descriptions now explicitly tell agents to launch useful independent background work instead of waiting.
+
+### Fixed
+- **`get_subagent_result(wait:true)` timeout no longer suppresses the eventual completion notification** — timed-out or aborted waits return the running status without marking the final result consumed.
+
 ## [0.10.3] - 2026-06-12
 
 ### Added

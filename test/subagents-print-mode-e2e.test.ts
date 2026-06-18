@@ -55,7 +55,7 @@ describe.skipIf(LIVE)("subagents print-mode e2e (scripted faux, real pi-mono)", 
         }),
         // NON-circular: the parent's final answer echoes whatever the child's
         // result actually was in context. For a background spawn the result
-        // arrives via a held follow-up nudge, not the synchronous tool result.
+        // arrives via an automatic completion nudge, not the synchronous tool result.
         parentFinal: (ctx: Context) => {
           const allText = ctx.messages
             .flatMap((m) => (Array.isArray((m as any).content) ? (m as any).content : []))

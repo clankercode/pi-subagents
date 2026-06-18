@@ -12,7 +12,7 @@ import { isAbsolute } from "node:path";
 import type { Model } from "@earendil-works/pi-ai";
 import type { AgentSession, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { resumeAgent, runAgent, type ToolActivity } from "./agent-runner.js";
-import type { AgentInvocation, AgentRecord, IsolationMode, SubagentType, ThinkingLevel } from "./types.js";
+import { type AgentInvocation, type AgentRecord, type IsolationMode, MAX_RECURSIVE_DEPTH, type SubagentType, type ThinkingLevel } from "./types.js";
 import { addUsage } from "./usage.js";
 import { cleanupWorktree, createWorktree, pruneWorktrees, } from "./worktree.js";
 
@@ -23,7 +23,6 @@ export type CompactionInfo = { reason: "manual" | "threshold" | "overflow"; toke
 
 /** Default max concurrent background agents. */
 const DEFAULT_MAX_CONCURRENT = 4;
-
 /**
  * Validate a caller-supplied SpawnOptions.cwd. `undefined`/`null` mean "unset"
  * (parent cwd). Anything else must be an absolute path to an existing
@@ -81,6 +80,10 @@ interface SpawnOptions {
   cwd?: string;
   /** Resolved invocation snapshot captured for UI display. */
   invocation?: AgentInvocation;
+  /** Recursive subagent depth. Parent/orchestrator is 0; spawned agents are 1..4. */
+  depth?: number;
+  /** Parent subagent id when spawned recursively from another subagent. */
+  parentAgentId?: string;
   /** Parent abort signal — when aborted, the subagent is also stopped. */
   signal?: AbortSignal;
   /** Called on tool start/end with activity info (for streaming progress to UI). */
@@ -94,6 +97,13 @@ interface SpawnOptions {
   /** Called once per assistant message_end with that message's usage delta. */
   onAssistantUsage?: (usage: { input: number; output: number; cacheWrite: number }) => void;
   /** Called when the session successfully compacts. */
+  onCompaction?: (info: CompactionInfo) => void;
+}
+
+interface ResumeOptions {
+  signal?: AbortSignal;
+  onToolActivity?: (activity: ToolActivity) => void;
+  onAssistantUsage?: (usage: { input: number; output: number; cacheWrite: number }) => void;
   onCompaction?: (info: CompactionInfo) => void;
 }
 
@@ -154,6 +164,10 @@ export class AgentManager {
     // call, not minutes later at drain. Throw (not warn): programmatic callers
     // can fix and retry; the RPC layer converts throws into error envelopes.
     assertValidSpawnCwd(options.cwd);
+    const depth = options.depth ?? 1;
+    if (depth > MAX_RECURSIVE_DEPTH) {
+      throw new Error(`Cannot spawn agent: maximum recursive subagent depth is ${MAX_RECURSIVE_DEPTH}.`);
+    }
 
     const id = randomUUID().slice(0, 17);
     const abortController = new AbortController();
@@ -168,6 +182,8 @@ export class AgentManager {
       lifetimeUsage: { input: 0, output: 0, cacheWrite: 0 },
       compactionCount: 0,
       invocation: options.invocation,
+      depth,
+      parentAgentId: options.parentAgentId,
     };
     this.agents.set(id, record);
 
@@ -269,6 +285,8 @@ export class AgentManager {
         this.onCompact?.(record, info);
         options.onCompaction?.(info);
       },
+      depth: record.depth,
+      parentAgentId: record.parentAgentId,
       onSessionCreated: (session) => {
         record.session = session;
         // Flush any steers that arrived before the session was ready
@@ -389,46 +407,70 @@ export class AgentManager {
     return record;
   }
 
-  /**
-   * Resume an existing agent session with a new prompt.
-   */
-  async resume(
+  /** Resume an existing agent session in the background. */
+  resume(
     id: string,
     prompt: string,
-    signal?: AbortSignal,
-  ): Promise<AgentRecord | undefined> {
+    signalOrOptions?: AbortSignal | ResumeOptions,
+  ): AgentRecord | undefined {
     const record = this.agents.get(id);
     if (!record?.session) return undefined;
+    const options = typeof (signalOrOptions as AbortSignal | undefined)?.addEventListener === "function"
+      ? { signal: signalOrOptions as AbortSignal }
+      : (signalOrOptions ?? {}) as ResumeOptions;
 
     record.status = "running";
     record.startedAt = Date.now();
     record.completedAt = undefined;
     record.result = undefined;
     record.error = undefined;
+    record.resultConsumed = false;
+    record.abortController = new AbortController();
+    this.runningBackground++;
+    this.onStart?.(record);
 
-    try {
-      const responseText = await resumeAgent(record.session, prompt, {
-        onToolActivity: (activity) => {
-          if (activity.type === "end") record.toolUses++;
-        },
-        onAssistantUsage: (usage) => {
-          addUsage(record.lifetimeUsage, usage);
-        },
-        onCompaction: (info) => {
-          record.compactionCount++;
-          this.onCompact?.(record, info);
-        },
-        signal,
-      });
+    const onParentAbort = () => this.abort(id);
+    options.signal?.addEventListener("abort", onParentAbort, { once: true });
+    const detach = () => options.signal?.removeEventListener("abort", onParentAbort);
+
+    const promise = resumeAgent(record.session, prompt, {
+      onToolActivity: (activity) => {
+        if (activity.type === "end") record.toolUses++;
+        options.onToolActivity?.(activity);
+      },
+      onAssistantUsage: (usage) => {
+        addUsage(record.lifetimeUsage, usage);
+        options.onAssistantUsage?.(usage);
+      },
+      onCompaction: (info) => {
+        record.compactionCount++;
+        this.onCompact?.(record, info);
+        options.onCompaction?.(info);
+      },
+      signal: record.abortController.signal,
+    }).then((responseText) => {
+      if (record.status !== "stopped") {
       record.status = "completed";
+      }
       record.result = responseText;
       record.completedAt = Date.now();
-    } catch (err) {
-      record.status = "error";
+      detach();
+      this.runningBackground--;
+      try { this.onComplete?.(record); } catch { /* ignore completion side-effect errors */ }
+      this.drainQueue();
+      return responseText;
+    }).catch((err) => {
+      if (record.status !== "stopped") record.status = "error";
       record.error = err instanceof Error ? err.message : String(err);
       record.completedAt = Date.now();
-    }
+      detach();
+      this.runningBackground--;
+      try { this.onComplete?.(record); } catch { /* ignore completion side-effect errors */ }
+      this.drainQueue();
+      return "";
+    });
 
+    record.promise = promise;
     return record;
   }
 

@@ -100,6 +100,31 @@ describe("get_subagent_result wait race", () => {
     vi.useRealTimers();
   });
 
+  it("wait:true timeout does not suppress the eventual completion notification", async () => {
+    vi.useFakeTimers();
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+
+    const { id, resolveRun } = await spawnControllable(tools, vi.mocked(runAgent));
+    const waitPromise = tools.get("get_subagent_result").execute(
+      "tc-wait", { agent_id: id, wait: true }, undefined, undefined, ctx(),
+    );
+    await vi.advanceTimersByTimeAsync(DEFAULT_WAIT_TIMEOUT_SECONDS * 1000 + 50);
+    expect(textOf(await waitPromise)).toContain("still running");
+
+    resolveRun({ responseText: "LATE_RESULT", session: { dispose: vi.fn() }, aborted: false, steered: false });
+    await vi.advanceTimersByTimeAsync(250);
+
+    expect(pi.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        customType: "subagent-notification",
+        content: expect.stringContaining("LATE_RESULT"),
+      }),
+      expect.objectContaining({ deliverAs: "steer", triggerTurn: true }),
+    );
+    vi.useRealTimers();
+  });
+
   it("wait:true is cancelled by the user via the parent abort signal", async () => {
     const { pi, tools } = makePi();
     subagentsExtension(pi);

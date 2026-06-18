@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { formatMs, formatSessionTokens } from "../src/ui/agent-widget.js";
+import { createActivityTracker } from "../src/index.js";
+import { describeActivityWithAge, formatMs, formatSessionTokens } from "../src/ui/agent-widget.js";
 
 describe("formatSessionTokens", () => {
   const theme = { fg: (c: string, s: string) => `<${c}>${s}</${c}>`, bold: (s: string) => s };
@@ -43,5 +44,31 @@ describe("formatMs (humanized duration)", () => {
     expect(formatMs(3_600_000)).toBe("1h");
     expect(formatMs(3_900_000)).toBe("1h 5m");
     expect(formatMs(7_470_000)).toBe("2h 4m");
+  });
+});
+
+describe("describeActivityWithAge", () => {
+  it("shows how long the current activity description has been current", () => {
+    const active = new Map([["read-1", "read"]]);
+    expect(describeActivityWithAge(active, "", 1_000, 3_400)).toBe("reading… · 2.4s");
+  });
+
+  it("omits the age until an activity timestamp exists", () => {
+    expect(describeActivityWithAge(new Map(), "drafting answer")).toBe("drafting answer");
+  });
+});
+
+describe("createActivityTracker", () => {
+  it("initializes initial thinking with an activity age timestamp", () => {
+    const { state } = createActivityTracker();
+
+    expect(state.activityDescription).toBe("thinking…");
+    expect(typeof state.activityDescriptionUpdatedAt).toBe("number");
+    expect(describeActivityWithAge(
+      state.activeTools,
+      state.responseText,
+      state.activityDescriptionUpdatedAt,
+      state.activityDescriptionUpdatedAt! + 2_400,
+    )).toBe("thinking… · 2.4s");
   });
 });

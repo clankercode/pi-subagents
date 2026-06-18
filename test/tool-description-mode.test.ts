@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import subagentsExtension from "../src/index.js";
 
 const EXAMPLE_TEMPLATE = fileURLToPath(new URL("../examples/agent-tool-description.md", import.meta.url));
+const EXTENSION_DEPTH_KEY = Symbol.for("pi-subagents:extension-depth");
 
 function makePi() {
   const tools = new Map<string, any>();
@@ -125,6 +126,7 @@ describe("toolDescriptionMode", () => {
       'isolation: "worktree"',
       ".pi/agents/",
       "self-contained",
+      "depth",
     ]) {
       expect(desc).toContain(contract);
     }
@@ -173,11 +175,31 @@ describe("toolDescriptionMode", () => {
     expect(desc).not.toContain("schedule");
   });
 
+  it("custom mode exposes live recursive depth placeholders", () => {
+    const g = globalThis as any;
+    const prev = g[EXTENSION_DEPTH_KEY];
+    g[EXTENSION_DEPTH_KEY] = { depth: 2, agentId: "parent-agent" };
+    try {
+      const tools = setup({ toolDescriptionMode: "custom" }, () => {
+        writeFileSync(
+          join(tmpDir, ".pi", "agent-tool-description.md"),
+          "Depth {{currentDepth}}/{{maxDepth}}\n{{recursiveGuideline}}",
+        );
+      });
+      const desc: string = tools.get("Agent").description;
+      expect(desc).toContain("Depth 2/4");
+      expect(desc).toContain("Current recursive depth: 2/4.");
+    } finally {
+      if (prev === undefined) delete g[EXTENSION_DEPTH_KEY];
+      else g[EXTENSION_DEPTH_KEY] = prev;
+    }
+  });
+
   it("every documented placeholder is replaced — no {{ }} residue", () => {
     const tools = setup({ toolDescriptionMode: "custom" }, () => {
       writeFileSync(
         join(tmpDir, ".pi", "agent-tool-description.md"),
-        "A {{typeList}} B {{compactTypeList}} C {{agentDir}} D {{scheduleGuideline}} E",
+        "A {{typeList}} B {{compactTypeList}} C {{agentDir}} D {{scheduleGuideline}} E {{currentDepth}} F {{maxDepth}} G {{recursiveGuideline}} H",
       );
     });
     const desc: string = tools.get("Agent").description;
@@ -188,20 +210,29 @@ describe("toolDescriptionMode", () => {
   it("the shipped example template renders byte-identical to the full description", async () => {
     // Guards examples/agent-tool-description.md against going stale: it must
     // reproduce the full description exactly. If you edit one, edit the other.
-    const example = readFileSync(EXAMPLE_TEMPLATE, "utf-8");
-    const tools = setup({ toolDescriptionMode: "custom" }, () => {
-      writeFileSync(join(tmpDir, ".pi", "agent-tool-description.md"), example);
-    });
-    const customDesc: string = tools.get("Agent").description;
-
-    // Second instance in the same hermetic cwd, flipped to full mode.
-    writeFileSync(join(tmpDir, ".pi", "subagents.json"), JSON.stringify({ toolDescriptionMode: "full" }));
-    const second = makePi();
-    subagentsExtension(second.pi);
+    const g = globalThis as any;
+    const prev = g[EXTENSION_DEPTH_KEY];
+    g[EXTENSION_DEPTH_KEY] = { depth: 2, agentId: "parent-agent" };
     try {
-      expect(customDesc).toBe(second.tools.get("Agent").description);
+      const example = readFileSync(EXAMPLE_TEMPLATE, "utf-8");
+      const tools = setup({ toolDescriptionMode: "custom" }, () => {
+        writeFileSync(join(tmpDir, ".pi", "agent-tool-description.md"), example);
+      });
+      const customDesc: string = tools.get("Agent").description;
+
+      // Second instance in the same hermetic cwd, flipped to full mode.
+      writeFileSync(join(tmpDir, ".pi", "subagents.json"), JSON.stringify({ toolDescriptionMode: "full" }));
+      const second = makePi();
+      subagentsExtension(second.pi);
+      try {
+        expect(customDesc).toBe(second.tools.get("Agent").description);
+        expect(customDesc).toContain("Current recursive depth: 2/4.");
+      } finally {
+        await second.handlers.get("session_shutdown")?.({}, { hasUI: false, ui: {} } as any);
+      }
     } finally {
-      await second.handlers.get("session_shutdown")?.({}, { hasUI: false, ui: {} } as any);
+      if (prev === undefined) delete g[EXTENSION_DEPTH_KEY];
+      else g[EXTENSION_DEPTH_KEY] = prev;
     }
   });
 

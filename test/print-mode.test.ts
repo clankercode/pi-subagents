@@ -5,10 +5,11 @@ vi.mock("../src/agent-runner.js", async () => {
   return {
     ...actual,
     runAgent: vi.fn(),
+    resumeAgent: vi.fn(),
   };
 });
 
-import { runAgent } from "../src/agent-runner.js";
+import { resumeAgent, runAgent } from "../src/agent-runner.js";
 import subagentsExtension from "../src/index.js";
 
 function makePi() {
@@ -99,7 +100,79 @@ describe("print mode background notifications", () => {
     await vi.advanceTimersByTimeAsync(100); // smart-join batch debounce
     await vi.advanceTimersByTimeAsync(200); // notification hold window
 
-    expect(pi.sendMessage).toHaveBeenCalled();
+    expect(pi.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ customType: "subagent-notification" }),
+      expect.objectContaining({ deliverAs: "steer", triggerTurn: true }),
+    );
+
+    await handlers.get("session_shutdown")?.({}, makeHeadlessCtx());
+  });
+
+  it("returns immediately for resume and sends the resumed result as a steering notification", async () => {
+    vi.useFakeTimers();
+    vi.mocked(runAgent).mockResolvedValue({
+      responseText: "first",
+      session: { dispose: vi.fn() } as any,
+      aborted: false,
+      steered: false,
+    });
+
+    const { pi, tools, handlers } = makePi();
+    pi.sendMessage = vi.fn();
+    subagentsExtension(pi);
+
+    const agentTool = tools.get("Agent");
+    const first = await agentTool.execute(
+      "tool-call-1",
+      {
+        prompt: "start",
+        description: "resumable child",
+        subagent_type: "general-purpose",
+      },
+      undefined,
+      undefined,
+      makeHeadlessCtx(),
+    );
+    const id = first.content[0].text.match(/Agent ID: (\S+)/)?.[1];
+    expect(id).toBeTruthy();
+
+    await vi.advanceTimersByTimeAsync(250);
+    vi.mocked(pi.sendMessage).mockClear();
+
+    let resolveResume!: (value: string) => void;
+    vi.mocked(resumeAgent).mockReturnValue(
+      new Promise((resolve) => {
+        resolveResume = resolve;
+      }),
+    );
+
+    const resumed = await agentTool.execute(
+      "tool-call-2",
+      {
+        resume: id,
+        prompt: "continue",
+        description: "ignored on resume",
+        subagent_type: "general-purpose",
+      },
+      undefined,
+      undefined,
+      makeHeadlessCtx(),
+    );
+
+    expect(resumed.content[0].text).toContain("Agent resumed in background.");
+    expect(resumed.content[0].text).toContain(`Agent ID: ${id}`);
+    expect(resumed.content[0].text).not.toContain("resumed output");
+
+    resolveResume("resumed output");
+    await vi.advanceTimersByTimeAsync(250);
+
+    expect(pi.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        customType: "subagent-notification",
+        content: expect.stringContaining("resumed output"),
+      }),
+      expect.objectContaining({ deliverAs: "steer", triggerTurn: true }),
+    );
 
     await handlers.get("session_shutdown")?.({}, makeHeadlessCtx());
   });

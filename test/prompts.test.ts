@@ -367,6 +367,30 @@ describe("buildAgentPrompt", () => {
       expect(prompt).toContain('<active_agent name="Some Agent With Spaces"/>');
     });
 
+    it("tag exposes recursive metadata when supplied", () => {
+      const config: AgentConfig = {
+        name: "agent&special",
+        description: "Test",
+        builtinToolNames: [],
+        extensions: true,
+        skills: true,
+        systemPrompt: "Test.",
+        promptMode: "replace",
+        inheritContext: false,
+        runInBackground: false,
+        isolated: false,
+      };
+      const prompt = buildAgentPrompt(config, "/workspace", env, undefined, {
+        agentId: "a1",
+        parentAgentId: 'p"2',
+        depth: 3,
+        maxDepth: 4,
+      });
+      expect(prompt).toContain(
+        '<active_agent name="agent&amp;special" agent_id="a1" parent_agent_id="p&quot;2" depth="3" max_depth="4"/>',
+      );
+    });
+
     it("tag appears before the env block in both modes", () => {
       for (const promptMode of ["replace", "append"] as const) {
         const config: AgentConfig = {

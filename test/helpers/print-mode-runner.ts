@@ -422,7 +422,7 @@ export async function runPrintMode(options: RunPrintModeOptions): Promise<PrintM
             // can consume the result first. Wait for that window before re-prompting
             // so the nudge actually lands in the session under test.
             await new Promise((r) => setTimeout(r, 300));
-            await session.prompt("Background agents have completed. Process their results.");
+            await session.prompt("Background agents have completed. Process their results.", { streamingBehavior: "steer" } as any);
           }
         }
       })(),

@@ -61,6 +61,9 @@ export interface AgentActivity {
   maxTurns?: number;
   /** Lifetime usage breakdown — see LifetimeUsage docs. */
   lifetimeUsage: LifetimeUsage;
+  /** Last rendered activity description and the time it became current. */
+  activityDescription?: string;
+  activityDescriptionUpdatedAt?: number;
 }
 
 /** Metadata attached to Agent tool results for custom rendering. */
@@ -177,6 +180,7 @@ export function buildInvocationTags(
   if (invocation.isolation === "worktree") tags.push("worktree");
   if (invocation.inheritContext) tags.push("inherit context");
   if (invocation.maxTurns != null) tags.push(`max turns: ${invocation.maxTurns}`);
+  if (invocation.depth != null) tags.push(`depth: ${invocation.depth}/${invocation.maxDepth ?? 4}`);
   return { modelName: invocation.modelName, tags };
 }
 
@@ -213,6 +217,17 @@ export function describeActivity(activeTools: Map<string, string>, responseText?
   }
 
   return "thinking…";
+}
+
+export function describeActivityWithAge(
+  activeTools: Map<string, string>,
+  responseText?: string,
+  updatedAt?: number,
+  now = Date.now(),
+): string {
+  const activity = describeActivity(activeTools, responseText);
+  if (updatedAt == null) return activity;
+  return `${activity} · ${formatMs(now - updatedAt)}`;
 }
 
 // ---- Widget manager ----
@@ -374,7 +389,9 @@ export class AgentWidget {
       parts.push(elapsed);
       const statsText = parts.join(" · ");
 
-      const activity = bg ? describeActivity(bg.activeTools, bg.responseText) : "thinking…";
+      const activity = bg
+        ? describeActivityWithAge(bg.activeTools, bg.responseText, bg.activityDescriptionUpdatedAt)
+        : "thinking…";
 
       runningLines.push([
         truncate(theme.fg("dim", "├─") + ` ${theme.fg("accent", frame)} ${theme.bold(name)}${modeTag}  ${theme.fg("muted", a.description)} ${theme.fg("dim", "·")} ${theme.fg("dim", statsText)}`),
