@@ -22,6 +22,7 @@ If the target is already known, use a direct tool — `read` for a known path, `
 - {{recursiveGuideline}}
 - Use get_subagent_result if you need to retrieve a result before the completion notification arrives, but do not poll or sleep waiting for it.
 - Use resume with an agent ID to continue a previous agent's work. A new (non-resume) Agent call starts a fresh agent with no memory of prior runs, so the prompt must be self-contained.
+- Use list_models to enumerate the model registry the `model:` param accepts before passing a model name explicitly.
 - Use steer_subagent to send mid-run messages to a running background agent.
 - Clearly tell the agent whether you expect it to write code or just to do research (search, file reads, etc.), since it is not aware of the user's intent.
 - If an agent's description says it should be used proactively, try to use it without the user having to ask for it first.

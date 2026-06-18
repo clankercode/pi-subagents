@@ -5,6 +5,7 @@
  *   Agent             — LLM-callable: spawn a sub-agent
  *   get_subagent_result  — LLM-callable: check background agent status/result
  *   steer_subagent       — LLM-callable: send a steering message to a running agent
+ *   list_models          — LLM-callable: enumerate available models in the current registry
  *
  * Commands:
  *   /agents                 — Interactive agent management menu
@@ -37,6 +38,7 @@ import { applyAndEmitLoaded, DEFAULT_WAIT_TIMEOUT_SECONDS, type SubagentsSetting
 import { getStatusNote } from "./status-note.js";
 import { type AgentConfig, type AgentInvocation, type AgentRecord, type JoinMode, MAX_RECURSIVE_DEPTH, type NotificationDetails, type SubagentType } from "./types.js";
 import { renderAgentCall, renderAgentResult, renderSteerCall, tailPreview } from "./ui/agent-tool-rendering.js";
+import { formatContextWindow } from "./ui/agent-widget.js";
 import {
   type AgentActivity,
   type AgentDetails,
@@ -1151,6 +1153,63 @@ export default function (pi: ExtensionAPI) {
       } catch (err) {
         return textResult(`Failed to steer agent: ${err instanceof Error ? err.message : String(err)}`);
       }
+    },
+  }));
+
+  // ---- list_models tool ----
+
+  pi.registerTool(defineTool({
+    name: SUBAGENT_TOOL_NAMES.LIST_MODELS,
+    label: "List Models",
+    description:
+      "List every model available in the current session's model registry (the same set the `model:` param on Agent accepts). " +
+      "Returns one model per line as `provider/id (name)` with the active model marked. " +
+      "Useful when dispatching work and you want to pick a model explicitly, or to confirm a model name before passing it to `model:`.",
+    promptSnippet: "Enumerate available models in the current registry",
+    parameters: Type.Object({
+      provider: Type.Optional(
+        Type.String({
+          description: "Optional provider name filter (case-insensitive). When set, only models from that provider are returned.",
+        }),
+      ),
+    }),
+    execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
+      const registry = ctx.modelRegistry as ModelRegistry | undefined;
+      if (!registry) {
+        return textResult("No model registry is available in the current session.");
+      }
+      const all = ((registry.getAvailable?.() ?? registry.getAll()) ?? []) as Array<{
+        id: string;
+        name: string;
+        provider: string;
+        contextWindow?: number;
+        reasoning?: boolean;
+      }>;
+      const providerFilter = params.provider?.trim().toLowerCase();
+      const filtered = providerFilter
+        ? all.filter((m) => m.provider.toLowerCase() === providerFilter)
+        : all;
+      if (filtered.length === 0) {
+        return textResult(
+          providerFilter
+            ? `No models available for provider "${params.provider}". Available providers: ${[...new Set(all.map((m) => m.provider))].sort().join(", ") || "(none)"}.`
+            : "No models are available in the current registry.",
+        );
+      }
+      const currentId = (ctx.model as { id?: string } | undefined)?.id;
+      const currentProvider = (ctx.model as { provider?: string } | undefined)?.provider;
+      const sorted = [...filtered].sort((a, b) =>
+        a.provider === b.provider ? a.id.localeCompare(b.id) : a.provider.localeCompare(b.provider),
+      );
+      const lines = sorted.map((m) => {
+        const isCurrent = currentId === m.id && (!currentProvider || currentProvider === m.provider);
+        const ctxInfo = m.contextWindow ? ` · ctx ${formatContextWindow(m.contextWindow)}` : "";
+        const reasoning = m.reasoning ? " · reasoning" : "";
+        const marker = isCurrent ? "* " : "  ";
+        return `${marker}${m.provider}/${m.id} (${m.name})${ctxInfo}${reasoning}`;
+      });
+      const header = `${sorted.length} model${sorted.length === 1 ? "" : "s"} available${providerFilter ? ` for provider "${params.provider}"` : ""}${currentId ? " — * = active" : ""}:`;
+      return textResult(`${header}\n${lines.join("\n")}`);
     },
   }));
 

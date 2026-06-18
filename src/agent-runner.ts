@@ -36,10 +36,21 @@ export const SUBAGENT_TOOL_NAMES = {
   AGENT: "Agent",
   GET_RESULT: "get_subagent_result",
   STEER: "steer_subagent",
+  LIST_MODELS: "list_models",
 } as const;
 
-/** Names of tools registered by this extension that are gated by recursive depth. */
-const RECURSIVE_TOOL_NAMES: string[] = Object.values(SUBAGENT_TOOL_NAMES);
+/**
+ * Names of tools registered by this extension that are GATED by recursive depth.
+ * Subset of SUBAGENT_TOOL_NAMES — only the tools that can spawn or address
+ * further subagents. Read-only / introspection tools like `list_models` are
+ * available at every depth so an agent can still ask questions about the
+ * environment even when it can't delegate.
+ */
+const RECURSIVE_TOOL_NAMES: string[] = [
+  SUBAGENT_TOOL_NAMES.AGENT,
+  SUBAGENT_TOOL_NAMES.GET_RESULT,
+  SUBAGENT_TOOL_NAMES.STEER,
+];
 
 const EXTENSION_DEPTH_KEY = Symbol.for("pi-subagents:extension-depth");
 const AUTO_EXPOSE_EXTENSION_NAMES = new Set(["pi-c2c"]);
