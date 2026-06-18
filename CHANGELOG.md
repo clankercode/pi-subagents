@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Recursive subagents to depth 4** — subagents can now receive `Agent`, `get_subagent_result`, and `steer_subagent` tools until recursive depth 4. The active-agent prompt tag, lifecycle events, and UI invocation tags expose depth metadata so parent/child relationships are visible.
 - **Activity-age display** — the live Agents widget shows how long the current activity description has been unchanged, making stalled-looking agents easier to spot.
+- **Agent `renderCall` shows model + distinctive flags at the call line** — the initial `▸ Agent …` header now includes a dimmed badge with the model (explicit `model:` arg → agent-config `model:` → hidden when inheriting), plus `resume: <id>`, `schedule: <expr>`, `worktree`, and `isolated` when those flags are set. Resolution mirrors the execute-time model lookup so what you see in the call line matches what runs. Other flags (`inherit_context`, `thinking`, `max_turns`) are still surfaced by the running/result render to keep the call line terse.
 
 ### Changed
 - **Background completion notifications use steering-style delivery** — completion notifications now use `deliverAs: "steer"` with `triggerTurn: true`, so busy parents receive them like steering messages and idle parents still start a follow-up turn automatically.

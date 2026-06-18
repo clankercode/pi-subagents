@@ -156,3 +156,104 @@ describe("Agent result renderResult", () => {
     expect(text).not.toContain("lines omitted");
   });
 });
+
+describe("Agent renderCall", () => {
+  it("shows just the agent name and description when no call-time metadata is set", () => {
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+    const rendered = tools.get("Agent").renderCall(
+      { subagent_type: "general-purpose", description: "summarize repo" },
+      theme,
+    );
+    const text = rendered.render(200).join("\n");
+    expect(text).toContain("Agent");
+    expect(text).toContain("summarize repo");
+    expect(text).not.toContain("·");
+    expect(text).not.toMatch(/claude|sonnet|haiku|opus/i);
+  });
+
+  it("surfaces an explicit per-call model override", () => {
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+    const rendered = tools.get("Agent").renderCall(
+      {
+        subagent_type: "general-purpose",
+        description: "summarize repo",
+        model: "anthropic/claude-sonnet-4-5",
+      },
+      theme,
+    );
+    const text = rendered.render(200).join("\n");
+    expect(text).toContain("claude-sonnet-4-5");
+    expect(text).toContain("Agent");
+  });
+
+  it("surfaces a model pinned in the agent's frontmatter config", () => {
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+    // The Explore default agent pins claude-haiku-4-5 in its frontmatter —
+    // no per-call `model` arg needed, renderCall should still surface it.
+    const rendered = tools.get("Agent").renderCall(
+      { subagent_type: "Explore", description: "scan repo" },
+      theme,
+    );
+    const text = rendered.render(200).join("\n");
+    expect(text).toContain("claude-haiku-4-5");
+    expect(text).toContain("Explore");
+  });
+
+  it("joins multiple call-time badges with a separator and keeps order stable", () => {
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+    const rendered = tools.get("Agent").renderCall(
+      {
+        subagent_type: "general-purpose",
+        description: "fan out",
+        model: "haiku",
+        isolation: "worktree",
+      },
+      theme,
+    );
+    const text = rendered.render(200).join("\n");
+    // Order matters: model is always first when present, then flags in source order.
+    const modelIdx = text.indexOf("haiku");
+    const worktreeIdx = text.indexOf("worktree");
+    expect(modelIdx).toBeGreaterThan(-1);
+    expect(worktreeIdx).toBeGreaterThan(modelIdx);
+    expect(text).toContain("·");
+  });
+
+  it("shows resume and schedule as their own dimmed badges with truncated IDs", () => {
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+    const rendered = tools.get("Agent").renderCall(
+      {
+        subagent_type: "general-purpose",
+        description: "follow-up",
+        resume: "agent-abcdef1234567890",
+        schedule: "every weekday 09:00",
+      },
+      theme,
+    );
+    const text = rendered.render(200).join("\n");
+    // compactPreview caps resume at 12 chars (incl. ellipsis); the full ID
+    // should NOT appear, but the truncated prefix should.
+    expect(text).toContain("resume: agent-abcde");
+    expect(text).toContain("…");
+    expect(text).not.toContain("agent-abcdef1234567890");
+    expect(text).toContain("schedule: every weekday 09:00");
+  });
+
+  it("truncates long schedule values rather than wrapping the call", () => {
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+    const longSchedule = "every minute of every day of every week of every month of every year forever";
+    const rendered = tools.get("Agent").renderCall(
+      { subagent_type: "general-purpose", description: "x", schedule: longSchedule },
+      theme,
+    );
+    const text = rendered.render(200).join("\n");
+    expect(text).toContain("…");
+    expect(text).not.toContain(longSchedule);
+  });
+});

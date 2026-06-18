@@ -1,4 +1,6 @@
 import { Text } from "@earendil-works/pi-tui";
+import { getModelLabelFromConfig } from "../agent-tool-description.js";
+import { getAgentConfig } from "../agent-types.js";
 import { type AgentDetails, formatMs, formatTurns, getDisplayName, SPINNER } from "./agent-widget.js";
 
 export function compactPreview(text: string, maxLen = 80): string {
@@ -25,10 +27,64 @@ export function snipMiddleLines(text: string, edgeLines = 20): string[] {
   ];
 }
 
-export function renderAgentCall(args: { subagent_type?: string; description?: string }, theme: any): Text {
+/**
+ * Shape of the args passed to the Agent tool's `renderCall`. Mirrors the tool
+ * parameter schema — only the fields whose presence changes the call-time
+ * header are listed. Anything we can't decide at call time (e.g. an agent that
+ * inherits its model from the parent) is intentionally omitted here and is
+ * surfaced later by `renderResult`.
+ */
+export interface AgentCallArgs {
+  subagent_type?: string;
+  description?: string;
+  /** Explicit per-call model override (`provider/modelId` or fuzzy name). */
+  model?: string;
+  /** Agent ID being resumed; only set on resume calls. */
+  resume?: string;
+  /** Schedule expression; only set on schedule calls. */
+  schedule?: string;
+  /** Drop parent extension tools for this run. */
+  isolated?: boolean;
+  /** Isolation mode — currently only "worktree". */
+  isolation?: "worktree";
+}
+
+/**
+ * Resolve the model that this call will use, if it's knowable before execute().
+ * Resolution order: explicit `args.model` > agent config frontmatter > none.
+ * Inheritance from the parent session is decided inside execute() and surfaced
+ * by `renderResult` once the resolved model is available.
+ */
+function resolveCallModel(args: any): string | undefined {
+  if (typeof args.model === "string" && args.model) return args.model;
+  if (typeof args.subagent_type === "string") return getAgentConfig(args.subagent_type)?.model;
+  return undefined;
+}
+
+/** Build the dimmed badge list shown between the agent name and the description. */
+function buildCallBadges(args: any, theme: any): string {
+  const badges: string[] = [];
+  const callModel = resolveCallModel(args);
+  if (callModel) badges.push(getModelLabelFromConfig(callModel));
+  if (typeof args.resume === "string" && args.resume) {
+    badges.push(`resume: ${compactPreview(args.resume, 12)}`);
+  }
+  if (typeof args.schedule === "string" && args.schedule) {
+    badges.push(`schedule: ${compactPreview(args.schedule, 20)}`);
+  }
+  if (args.isolation === "worktree") badges.push("worktree");
+  if (args.isolated) badges.push("isolated");
+  if (badges.length === 0) return "";
+  const sep = " " + theme.fg("dim", "·") + " ";
+  return "  " + badges.map((b) => theme.fg("dim", b)).join(sep);
+}
+
+export function renderAgentCall(args: any, theme: any): Text {
   const displayName = args.subagent_type ? getDisplayName(args.subagent_type) : "Agent";
   const desc = args.description ?? "";
-  return new Text("▸ " + theme.fg("toolTitle", theme.bold(displayName)) + (desc ? "  " + theme.fg("muted", desc) : ""), 0, 0);
+  const badges = buildCallBadges(args, theme);
+  const descPart = desc ? "  " + theme.fg("muted", desc) : "";
+  return new Text("▸ " + theme.fg("toolTitle", theme.bold(displayName)) + badges + descPart, 0, 0);
 }
 
 export function renderAgentResult(result: any, { expanded, isPartial }: { expanded: boolean; isPartial: boolean }, theme: any): Text {
