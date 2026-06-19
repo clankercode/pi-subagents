@@ -7,18 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- **Recursive subagents to depth 4** — subagents can now receive `Agent`, `get_subagent_result`, and `steer_subagent` tools until recursive depth 4. The active-agent prompt tag, lifecycle events, and UI invocation tags expose depth metadata so parent/child relationships are visible.
-- **Activity-age display** — the live Agents widget shows how long the current activity description has been unchanged, making stalled-looking agents easier to spot.
-- **Agent `renderCall` shows model + distinctive flags at the call line** — the initial `▸ Agent …` header now includes a dimmed badge with the model (explicit `model:` arg → agent-config `model:` → hidden when inheriting), plus `resume: <id>`, `schedule: <expr>`, `worktree`, and `isolated` when those flags are set. Resolution mirrors the execute-time model lookup so what you see in the call line matches what runs. Other flags (`inherit_context`, `thinking`, `max_turns`) are still surfaced by the running/result render to keep the call line terse.
-- **`list_models` tool** — always-on, callable by any agent (orchestrator and subagents) to enumerate the model registry the `model:` param on `Agent` accepts. Returns one model per line as `provider/id (name)` with the active model marked, plus optional `ctx` and `reasoning` annotations. Optional `provider` filter narrows the result. Lets agents do model-aware dispatch without hardcoding model names, and lets subagents confirm a model exists before recommending it. Not depth-gated (added to `SUBAGENT_TOOL_NAMES` but excluded from the recursive-tool list, which is now a hand-picked subset so future read-only/introspection tools don't get filtered at depth 4 by default).
-
-### Changed
-- **Background completion notifications use steering-style delivery** — completion notifications now use `deliverAs: "steer"` with `triggerTurn: true`, so busy parents receive them like steering messages and idle parents still start a follow-up turn automatically.
-- **Agent instructions push backgrounding harder** — full, compact, and custom-template descriptions now explicitly tell agents to launch useful independent background work instead of waiting.
+## [0.10.4] - 2026-06-19
 
 ### Fixed
-- **`get_subagent_result(wait:true)` timeout no longer suppresses the eventual completion notification** — timed-out or aborted waits return the running status without marking the final result consumed.
+- **Subagent completion notifications now include final output and explicit retrieval guidance** — both the machine-readable XML payload and the visible custom renderer include a `get_subagent_result <id>` instruction plus the transcript file path, so the parent can read the full output/log from the notification itself.
 
 ## [0.10.3] - 2026-06-12
 
