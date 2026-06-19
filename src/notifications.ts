@@ -33,6 +33,9 @@ export function formatTaskNotification(record: AgentRecord, resultMaxLen: number
       ? record.result.slice(0, resultMaxLen) + "\n...(truncated, use get_subagent_result for full output)"
       : record.result
     : "No output.";
+  const fullOutputInstruction = record.outputFile
+    ? `Read the full output/log with get_subagent_result for agent ${record.id}, or inspect the transcript file: ${record.outputFile}`
+    : `Read the full output/log with get_subagent_result for agent ${record.id}.`;
 
   return [
     `<task-notification>`,
@@ -42,6 +45,7 @@ export function formatTaskNotification(record: AgentRecord, resultMaxLen: number
     `<status>${escapeXml(status)}</status>`,
     `<summary>Agent "${escapeXml(record.description)}" ${record.status}${getStatusNote(record.status)}</summary>`,
     `<result>${escapeXml(resultPreview)}</result>`,
+    `<full-output>${escapeXml(fullOutputInstruction)}</full-output>`,
     `<usage><total_tokens>${totalTokens}</total_tokens><tool_uses>${record.toolUses}</tool_uses>${ctxXml}${compactXml}<duration_ms>${durationMs}</duration_ms></usage>`,
     `</task-notification>`,
   ].filter(Boolean).join("\n");
@@ -101,9 +105,10 @@ export function registerSubagentNotificationRenderer(pi: ExtensionAPI): void {
           line += "\n  " + theme.fg("dim", `⎿  ${preview}`);
         }
 
-        if (d.outputFile) {
-          line += "\n  " + theme.fg("muted", `transcript: ${d.outputFile}`);
-        }
+        const fullOutputHint = d.outputFile
+          ? `full output: get_subagent_result ${d.id} or transcript: ${d.outputFile}`
+          : `full output: get_subagent_result ${d.id}`;
+        line += "\n  " + theme.fg("muted", fullOutputHint);
 
         return line;
       }
