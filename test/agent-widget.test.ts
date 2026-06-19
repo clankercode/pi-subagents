@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { createActivityTracker } from "../src/index.js";
 import { describeActivityWithAge, formatMs, formatSessionTokens } from "../src/ui/agent-widget.js";
-import { buildAgentTree, type WidgetAgentSnapshot } from "../src/ui/agent-widget-tree.js";
+import { buildAgentTree, renderAgentTree, type WidgetAgentSnapshot } from "../src/ui/agent-widget-tree.js";
+
+const plainTheme = { fg: (_c: string, s: string) => s, bold: (s: string) => s };
 
 function snap(partial: Partial<WidgetAgentSnapshot> & { id: string }): WidgetAgentSnapshot {
   return {
@@ -35,6 +37,45 @@ describe("agent widget tree model", () => {
     expect(tree).toHaveLength(1);
     expect(tree[0].snapshot.id).toBe("orphan");
     expect(tree[0].orphaned).toBe(true);
+  });
+});
+
+describe("agent widget tree rendering", () => {
+  it("renders a grandchild with recursive connectors", () => {
+    const lines = renderAgentTree([
+      snap({ id: "parent", description: "parent task", depth: 1 }),
+      snap({ id: "child", description: "child task", parentAgentId: "parent", depth: 2 }),
+      snap({ id: "grandchild", description: "grandchild task", parentAgentId: "child", depth: 3 }),
+      snap({ id: "sibling", description: "sibling task", parentAgentId: "parent", depth: 2, status: "queued" }),
+    ], { mode: "compact", width: 120, maxLines: 12, theme: plainTheme, frame: "⠋", now: 10_000 });
+
+    const text = lines.join("\n");
+    expect(text).toContain("parent task");
+    expect(text).toContain("│  └─");
+    expect(text).toContain("grandchild task");
+  });
+
+  it("auto mode falls back to compact when rich output exceeds the line budget", () => {
+    const lines = renderAgentTree([
+      snap({ id: "parent", description: "parent task" }),
+      snap({ id: "child", description: "child task", parentAgentId: "parent" }),
+      snap({ id: "grandchild", description: "grandchild task", parentAgentId: "child" }),
+    ], { mode: "auto", width: 120, maxLines: 4, theme: plainTheme, frame: "⠋", now: 10_000 });
+
+    expect(lines.length).toBeLessThanOrEqual(4);
+    expect(lines.some(l => l.includes("⎿"))).toBe(false);
+  });
+
+  it("collapses overflow by reporting hidden descendants", () => {
+    const records = Array.from({ length: 8 }, (_, i) => snap({
+      id: `agent-${i}`,
+      description: `agent ${i}`,
+      parentAgentId: i === 0 ? undefined : `agent-${i - 1}`,
+    }));
+
+    const lines = renderAgentTree(records, { mode: "compact", width: 120, maxLines: 5, theme: plainTheme, frame: "⠋", now: 10_000 });
+    expect(lines.length).toBeLessThanOrEqual(5);
+    expect(lines.join("\n")).toMatch(/hidden|more/);
   });
 });
 
