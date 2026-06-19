@@ -151,9 +151,16 @@ export function renderAgentTree(records: WidgetAgentSnapshot[], options: RenderT
   const active = records.filter(r => r.status === "running").length;
   const queued = records.filter(r => r.status === "queued").length;
   const maxDepth = records.reduce((max, r) => Math.max(max, r.depth ?? 0), 0);
-  const richRows = collectRows(tree, { ...options, now }, "rich");
-  const mode = chooseEffectiveMode(options.mode, options.width, richRows.length + 1, options.maxLines);
-  const rows = mode === "rich" ? richRows : collectRows(tree, { ...options, now }, "compact");
+  let mode: "rich" | "compact";
+  let rows: string[];
+  if (options.mode === "rich" || options.mode === "compact") {
+    mode = options.mode;
+    rows = collectRows(tree, { ...options, now }, mode);
+  } else {
+    const richRows = collectRows(tree, { ...options, now }, "rich");
+    mode = chooseEffectiveMode(options.mode, options.width, richRows.length + 1, options.maxLines);
+    rows = mode === "rich" ? richRows : collectRows(tree, { ...options, now }, "compact");
+  }
   const suffix = mode === "rich" && records.length > 0
     ? options.theme.fg("dim", ` ${active} running · ${queued} queued · depth ${maxDepth}/4`)
     : "";

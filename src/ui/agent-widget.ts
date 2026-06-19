@@ -8,7 +8,7 @@
 import type { AgentManager } from "../agent-manager.js";
 import { getConfig } from "../agent-types.js";
 import type { AgentInvocation, SubagentType } from "../types.js";
-import { getLifetimeTotal, type LifetimeUsage, type SessionLike } from "../usage.js";
+import type { LifetimeUsage, SessionLike } from "../usage.js";
 import {
   renderAgentTree,
   type WidgetAgentSnapshot,
@@ -299,6 +299,9 @@ export class AgentWidget {
 
   upsertSnapshot(snapshot: WidgetAgentSnapshot) {
     this.descendantSnapshots.set(snapshot.id, snapshot);
+    if (snapshot.status !== "running" && snapshot.status !== "queued") {
+      this.markFinished(snapshot.id);
+    }
     this.update();
   }
 
@@ -360,7 +363,6 @@ export class AgentWidget {
 
   private recordToSnapshot(a: any): WidgetAgentSnapshot {
     const activity = this.agentActivity.get(a.id);
-    const tokens = getLifetimeTotal(activity?.lifetimeUsage);
     return {
       id: a.id,
       type: a.type,
@@ -374,7 +376,6 @@ export class AgentWidget {
       parentAgentId: a.parentAgentId,
       invocation: a.invocation,
       activity,
-      ...(tokens > 0 ? {} : {}),
     };
   }
 

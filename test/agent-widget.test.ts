@@ -80,6 +80,28 @@ describe("agent widget tree rendering", () => {
 });
 
 describe("AgentWidget recursive rendering", () => {
+  it("ages completed descendant snapshots out after their linger window", () => {
+    const manager = { listAgents: () => [] } as any;
+    const ui = { setStatus: vi.fn(), setWidget: vi.fn() } as any;
+    const widget = new AgentWidget(manager, new Map());
+    widget.setUICtx(ui);
+    widget.upsertSnapshot(snap({
+      id: "done-grandchild",
+      parentAgentId: "missing-parent",
+      description: "done grandchild",
+      status: "completed",
+      completedAt: 2,
+    }));
+
+    widget.update();
+    let factory = ui.setWidget.mock.calls.at(-1)[1];
+    let component = factory({ terminal: { columns: 120 }, requestRender: vi.fn() }, plainTheme);
+    expect(component.render().join("\n")).toContain("done grandchild");
+
+    widget.onTurnStart();
+    expect(ui.setWidget).toHaveBeenLastCalledWith("agents", undefined);
+  });
+
   it("renders descendant snapshots that are not in the local manager", () => {
     const manager = { listAgents: () => [snap({ id: "parent", description: "parent", status: "running" })] } as any;
     const ui = { setStatus: vi.fn(), setWidget: vi.fn() } as any;
