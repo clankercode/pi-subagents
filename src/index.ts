@@ -38,18 +38,19 @@ import { applyAndEmitLoaded, DEFAULT_WAIT_TIMEOUT_SECONDS, type SubagentsSetting
 import { getStatusNote } from "./status-note.js";
 import { type AgentConfig, type AgentInvocation, type AgentRecord, type JoinMode, MAX_RECURSIVE_DEPTH, type NotificationDetails, type SubagentType } from "./types.js";
 import { renderAgentCall, renderAgentResult, renderSteerCall, tailPreview } from "./ui/agent-tool-rendering.js";
-import { formatContextWindow } from "./ui/agent-widget.js";
 import {
   type AgentActivity,
   type AgentDetails,
   AgentWidget,
   buildInvocationTags,
   describeActivity,
+  formatContextWindow,
   formatDuration,
   getDisplayName,
   getPromptModeLabel,
   type UICtx,
 } from "./ui/agent-widget.js";
+import type { WidgetAgentSnapshot, WidgetDisplayMode } from "./ui/agent-widget-tree.js";
 import { menuSelect } from "./ui/menu-select.js";
 import { showSchedulesMenu } from "./ui/schedule-menu.js";
 import { addUsage, getLifetimeTotal, getSessionContextPercent } from "./usage.js";
@@ -289,6 +290,23 @@ export default function (pi: ExtensionAPI) {
     30_000,
   );
 
+  function widgetSnapshotFromEvent(payload: any): WidgetAgentSnapshot | undefined {
+    if (!payload || typeof payload.id !== "string" || typeof payload.type !== "string") return undefined;
+    return {
+      id: payload.id,
+      type: payload.type,
+      description: String(payload.description ?? payload.type),
+      status: String(payload.status ?? "running"),
+      startedAt: typeof payload.startedAt === "number" ? payload.startedAt : Date.now(),
+      completedAt: typeof payload.completedAt === "number" ? payload.completedAt : undefined,
+      error: typeof payload.error === "string" ? payload.error : undefined,
+      toolUses: typeof payload.toolUses === "number" ? payload.toolUses : 0,
+      depth: typeof payload.depth === "number" ? payload.depth : undefined,
+      parentAgentId: typeof payload.parentAgentId === "string" ? payload.parentAgentId : undefined,
+      invocation: payload.invocation,
+    };
+  }
+
   /** Helper: build event data for lifecycle events from an AgentRecord. */
   function buildEventData(record: AgentRecord) {
     const durationMs = record.completedAt ? record.completedAt - record.startedAt : Date.now() - record.startedAt;
@@ -313,6 +331,9 @@ export default function (pi: ExtensionAPI) {
       tokens,
       depth: record.depth,
       parentAgentId: record.parentAgentId,
+      startedAt: record.startedAt,
+      completedAt: record.completedAt,
+      invocation: record.invocation,
     };
   }
 
@@ -364,6 +385,10 @@ export default function (pi: ExtensionAPI) {
       description: record.description,
       depth: record.depth,
       parentAgentId: record.parentAgentId,
+      status: "running",
+      startedAt: record.startedAt,
+      toolUses: record.toolUses,
+      invocation: record.invocation,
     });
   }, (record, info) => {
     // Emit compacted event when agent's session compacts (preserves count on record).
@@ -418,12 +443,14 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     currentCtx = ctx;
     manager.clearCompleted();
+    widget.clearSnapshots();
     retryStash.clear();
     if (isSchedulingEnabled() && !scheduler.isActive()) startScheduler(ctx);
   });
 
   pi.on("session_before_switch", () => {
     manager.clearCompleted();
+    widget.clearSnapshots();
     retryStash.clear();
     scheduler.stop();
   });
@@ -444,6 +471,9 @@ export default function (pi: ExtensionAPI) {
     unsubSpawnRpc();
     unsubStopRpc();
     unsubPingRpc();
+    unsubWidgetStarted?.();
+    unsubWidgetCompleted?.();
+    unsubWidgetFailed?.();
     currentCtx = undefined;
     delete (globalThis as any)[MANAGER_KEY];
     scheduler.stop();
@@ -456,6 +486,21 @@ export default function (pi: ExtensionAPI) {
 
   // Live widget: show running agents above editor
   const widget = new AgentWidget(manager, agentActivity);
+  const upsertWidgetEventSnapshot = (payload: unknown) => {
+    const snapshot = widgetSnapshotFromEvent(payload);
+    if (snapshot) widget.upsertSnapshot(snapshot);
+  };
+  const unsubWidgetStarted = pi.events.on("subagents:started", upsertWidgetEventSnapshot);
+  const unsubWidgetCompleted = pi.events.on("subagents:completed", upsertWidgetEventSnapshot);
+  const unsubWidgetFailed = pi.events.on("subagents:failed", upsertWidgetEventSnapshot);
+
+  // ---- Widget display configuration ----
+  let widgetDisplayMode: WidgetDisplayMode = "auto";
+  function getWidgetDisplayMode(): WidgetDisplayMode { return widgetDisplayMode; }
+  function setWidgetDisplayMode(mode: WidgetDisplayMode): void {
+    widgetDisplayMode = mode;
+    widget.setDisplayMode(mode);
+  }
 
   // ---- Join mode configuration ----
   let defaultJoinMode: JoinMode = 'async';
@@ -576,6 +621,7 @@ export default function (pi: ExtensionAPI) {
       setToolDescriptionMode: setToolDescriptionMode,
       setWaitTimeoutSeconds,
       setAbortResendKey: (key: string) => { abortResendKey = key; },
+      setWidgetDisplayMode,
     },
     (event, payload) => pi.events.emit(event, payload),
   );
@@ -1783,6 +1829,7 @@ ${systemPrompt}
       toolDescriptionMode: getToolDescriptionMode(),
       waitTimeoutSeconds: getWaitTimeoutSeconds(),
       abortResendKey: abortResendKey,
+      widgetDisplayMode: getWidgetDisplayMode(),
     };
   }
 
@@ -1853,6 +1900,13 @@ ${systemPrompt}
           values: ["full", "compact", "custom"],
         },
         {
+          id: "widgetDisplayMode",
+          label: "Widget display",
+          description: "Recursive subagent widget display: auto (rich with compact fallback), rich, or compact",
+          currentValue: getWidgetDisplayMode(),
+          values: ["auto", "rich", "compact"],
+        },
+        {
           id: "waitTimeoutSeconds",
           label: "Wait timeout",
           description: "Seconds get_subagent_result wait:true blocks before returning status (30–3600, Enter to type)",
@@ -1917,6 +1971,9 @@ ${systemPrompt}
       } else if (id === "toolDescriptionMode") {
         setToolDescriptionMode(value as ToolDescriptionMode);
         notifyApplied(ctx, `Tool description set to ${value}. Takes effect on next pi session.`);
+      } else if (id === "widgetDisplayMode") {
+        setWidgetDisplayMode(value as WidgetDisplayMode);
+        notifyApplied(ctx, `Widget display set to ${value}`);
       } else if (id === "waitTimeoutSeconds") {
         const n = parseInt(value, 10);
         if (n >= 30 && n <= 3600) {

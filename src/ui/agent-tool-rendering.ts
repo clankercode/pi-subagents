@@ -1,7 +1,7 @@
 import { Text } from "@earendil-works/pi-tui";
-import { extractText } from "../context.js";
 import { getModelLabelFromConfig } from "../agent-tool-description.js";
 import { getAgentConfig } from "../agent-types.js";
+import { extractText } from "../context.js";
 import { type AgentDetails, formatMs, formatTurns, getDisplayName, SPINNER } from "./agent-widget.js";
 
 export function compactPreview(text: string, maxLen = 80): string {

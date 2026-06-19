@@ -108,6 +108,42 @@ describe("print mode background notifications", () => {
     await handlers.get("session_shutdown")?.({}, makeHeadlessCtx());
   });
 
+  it("emits started lifecycle snapshots rich enough for recursive widget aggregation", async () => {
+    vi.mocked(runAgent).mockResolvedValue({
+      responseText: "done",
+      session: { dispose: vi.fn() } as any,
+      aborted: false,
+      steered: false,
+    });
+
+    const { pi, tools, handlers } = makePi();
+    subagentsExtension(pi);
+
+    const agentTool = tools.get("Agent");
+    await agentTool.execute(
+      "tool-call-1",
+      {
+        prompt: "reply done",
+        description: "tiny child",
+        subagent_type: "general-purpose",
+      },
+      undefined,
+      undefined,
+      makeHeadlessCtx(),
+    );
+
+    expect(pi.events.emit).toHaveBeenCalledWith("subagents:started", expect.objectContaining({
+      id: expect.any(String),
+      description: "tiny child",
+      status: "running",
+      toolUses: 0,
+      startedAt: expect.any(Number),
+      depth: 1,
+    }));
+
+    await handlers.get("session_shutdown")?.({}, makeHeadlessCtx());
+  });
+
   it("returns immediately for resume and sends the resumed result as a steering notification", async () => {
     vi.useFakeTimers();
     vi.mocked(runAgent).mockResolvedValue({

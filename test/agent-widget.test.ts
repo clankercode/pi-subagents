@@ -1,7 +1,126 @@
-import { describe, expect, it, vi } from "vitest";
 import { visibleWidth } from "@earendil-works/pi-tui";
+import { describe, expect, it, vi } from "vitest";
 import { createActivityTracker } from "../src/index.js";
 import { AgentWidget, describeActivityWithAge, formatMs, formatSessionTokens, formatSubagentStatusText } from "../src/ui/agent-widget.js";
+import { buildAgentTree, renderAgentTree, type WidgetAgentSnapshot } from "../src/ui/agent-widget-tree.js";
+
+const plainTheme = { fg: (_c: string, s: string) => s, bold: (s: string) => s };
+
+function snap(partial: Partial<WidgetAgentSnapshot> & { id: string }): WidgetAgentSnapshot {
+  return {
+    type: "general-purpose" as any,
+    description: partial.id,
+    status: "running",
+    startedAt: 1,
+    toolUses: 0,
+    ...partial,
+  };
+}
+
+describe("agent widget tree model", () => {
+  it("links parent child and grandchild records by parentAgentId", () => {
+    const tree = buildAgentTree([
+      snap({ id: "parent", depth: 1 }),
+      snap({ id: "child", parentAgentId: "parent", depth: 2 }),
+      snap({ id: "grandchild", parentAgentId: "child", depth: 3 }),
+    ]);
+
+    expect(tree.map(n => n.snapshot.id)).toEqual(["parent"]);
+    expect(tree[0].children.map(n => n.snapshot.id)).toEqual(["child"]);
+    expect(tree[0].children[0].children.map(n => n.snapshot.id)).toEqual(["grandchild"]);
+  });
+
+  it("keeps orphaned descendants visible as roots", () => {
+    const tree = buildAgentTree([
+      snap({ id: "orphan", parentAgentId: "missing-parent", depth: 3 }),
+    ]);
+
+    expect(tree).toHaveLength(1);
+    expect(tree[0].snapshot.id).toBe("orphan");
+    expect(tree[0].orphaned).toBe(true);
+  });
+});
+
+describe("agent widget tree rendering", () => {
+  it("renders a grandchild with recursive connectors", () => {
+    const lines = renderAgentTree([
+      snap({ id: "parent", description: "parent task", depth: 1 }),
+      snap({ id: "child", description: "child task", parentAgentId: "parent", depth: 2 }),
+      snap({ id: "grandchild", description: "grandchild task", parentAgentId: "child", depth: 3 }),
+      snap({ id: "sibling", description: "sibling task", parentAgentId: "parent", depth: 2, status: "queued" }),
+    ], { mode: "compact", width: 120, maxLines: 12, theme: plainTheme, frame: "⠋", now: 10_000 });
+
+    const text = lines.join("\n");
+    expect(text).toContain("parent task");
+    expect(text).toContain("│  └─");
+    expect(text).toContain("grandchild task");
+  });
+
+  it("auto mode falls back to compact when rich output exceeds the line budget", () => {
+    const lines = renderAgentTree([
+      snap({ id: "parent", description: "parent task" }),
+      snap({ id: "child", description: "child task", parentAgentId: "parent" }),
+      snap({ id: "grandchild", description: "grandchild task", parentAgentId: "child" }),
+    ], { mode: "auto", width: 120, maxLines: 4, theme: plainTheme, frame: "⠋", now: 10_000 });
+
+    expect(lines.length).toBeLessThanOrEqual(4);
+    expect(lines.some(l => l.includes("⎿"))).toBe(false);
+  });
+
+  it("collapses overflow by reporting hidden descendants", () => {
+    const records = Array.from({ length: 8 }, (_, i) => snap({
+      id: `agent-${i}`,
+      description: `agent ${i}`,
+      parentAgentId: i === 0 ? undefined : `agent-${i - 1}`,
+    }));
+
+    const lines = renderAgentTree(records, { mode: "compact", width: 120, maxLines: 5, theme: plainTheme, frame: "⠋", now: 10_000 });
+    expect(lines.length).toBeLessThanOrEqual(5);
+    expect(lines.join("\n")).toMatch(/hidden|more/);
+  });
+});
+
+describe("AgentWidget recursive rendering", () => {
+  it("ages completed descendant snapshots out after their linger window", () => {
+    const manager = { listAgents: () => [] } as any;
+    const ui = { setStatus: vi.fn(), setWidget: vi.fn() } as any;
+    const widget = new AgentWidget(manager, new Map());
+    widget.setUICtx(ui);
+    widget.upsertSnapshot(snap({
+      id: "done-grandchild",
+      parentAgentId: "missing-parent",
+      description: "done grandchild",
+      status: "completed",
+      completedAt: 2,
+    }));
+
+    widget.update();
+    const factory = ui.setWidget.mock.calls.at(-1)[1];
+    const component = factory({ terminal: { columns: 120 }, requestRender: vi.fn() }, plainTheme);
+    expect(component.render().join("\n")).toContain("done grandchild");
+
+    widget.onTurnStart();
+    expect(ui.setWidget).toHaveBeenLastCalledWith("agents", undefined);
+  });
+
+  it("renders descendant snapshots that are not in the local manager", () => {
+    const manager = { listAgents: () => [snap({ id: "parent", description: "parent", status: "running" })] } as any;
+    const ui = { setStatus: vi.fn(), setWidget: vi.fn() } as any;
+    const widget = new AgentWidget(manager, new Map());
+    widget.setUICtx(ui);
+    widget.upsertSnapshot(snap({ id: "child", parentAgentId: "parent", description: "child", status: "running" }));
+    widget.upsertSnapshot(snap({ id: "grandchild", parentAgentId: "child", description: "grandchild", status: "running" }));
+
+    widget.update();
+    const factory = ui.setWidget.mock.calls.at(-1)[1];
+    const component = factory({ terminal: { columns: 120 }, requestRender: vi.fn() }, plainTheme);
+    const text = component.render().join("\n");
+
+    expect(text).toContain("parent");
+    expect(text).toContain("child");
+    expect(text).toContain("grandchild");
+  });
+});
 
 describe("formatSessionTokens", () => {
   const theme = { fg: (c: string, s: string) => `<${c}>${s}</${c}>`, bold: (s: string) => s };
@@ -16,7 +135,7 @@ describe("formatSessionTokens", () => {
   });
 
   it("annotates compaction count alongside percent", () => {
-    // compactions only (e.g. immediately post-compaction, percent null)
+    // compactions only (e.g. immediately post-compact, percent null)
     expect(formatSessionTokens(1234, null, theme, 1)).toBe("1.2k token (<dim>⇊1</dim>)");
     expect(formatSessionTokens(1234, null, theme, 3)).toBe("1.2k token (<dim>⇊3</dim>)");
     // percent + compactions, joined with ` · `
