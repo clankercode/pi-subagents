@@ -95,6 +95,27 @@ describe("settings persistence", () => {
     expect(loadSettings(projectDir)).toEqual(settings);
   });
 
+  it("round-trips widgetDisplayMode values", () => {
+    for (const widgetDisplayMode of ["auto", "rich", "compact"] as const) {
+      saveSettings({ widgetDisplayMode } as any, projectDir);
+      expect(loadSettings(projectDir).widgetDisplayMode).toBe(widgetDisplayMode);
+    }
+  });
+
+  it("drops invalid widgetDisplayMode values", () => {
+    writeProject({ widgetDisplayMode: "wide" });
+    expect(loadSettings(projectDir).widgetDisplayMode).toBeUndefined();
+  });
+
+  it("applySettings calls setWidgetDisplayMode only for valid values", () => {
+    const setWidgetDisplayMode = vi.fn();
+    applySettings({ widgetDisplayMode: "rich" } as any, { setWidgetDisplayMode } as never);
+    expect(setWidgetDisplayMode).toHaveBeenCalledWith("rich");
+    setWidgetDisplayMode.mockClear();
+    applySettings({}, { setWidgetDisplayMode } as never);
+    expect(setWidgetDisplayMode).not.toHaveBeenCalled();
+  });
+
   it("round-trips schedulingEnabled (true and false), and absence stays absent", () => {
     saveSettings({ schedulingEnabled: false }, projectDir);
     expect(loadSettings(projectDir)).toEqual({ schedulingEnabled: false });

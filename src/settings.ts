@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { JoinMode } from "./types.js";
+import type { WidgetDisplayMode } from "./ui/agent-widget-tree.js";
 
 export interface SubagentsSettings {
   maxConcurrent?: number;
@@ -83,6 +84,8 @@ export interface SubagentsSettings {
    * The PI_ABORT_RESEND_KEY env var, if set, takes precedence over this.
    */
   abortResendKey?: string;
+  /** How the live subagent widget renders recursive trees. Defaults to auto. */
+  widgetDisplayMode?: WidgetDisplayMode;
 }
 
 export type ToolDescriptionMode = "full" | "compact" | "custom";
@@ -102,6 +105,7 @@ export interface SettingsAppliers {
   setToolDescriptionMode: (mode: ToolDescriptionMode) => void;
   setWaitTimeoutSeconds: (seconds: number) => void;
   setAbortResendKey: (key: string) => void;
+  setWidgetDisplayMode: (mode: WidgetDisplayMode) => void;
 }
 
 /** Emit callback — a subset of `pi.events.emit` to keep helpers testable. */
@@ -109,6 +113,7 @@ export type SettingsEmit = (event: string, payload: unknown) => void;
 
 const VALID_JOIN_MODES: ReadonlySet<string> = new Set<JoinMode>(["async", "group", "smart"]);
 const VALID_TOOL_DESCRIPTION_MODES: ReadonlySet<string> = new Set<ToolDescriptionMode>(["full", "compact", "custom"]);
+const VALID_WIDGET_DISPLAY_MODES: ReadonlySet<string> = new Set<WidgetDisplayMode>(["auto", "rich", "compact"]);
 
 // Sanity ceilings — prevent hand-edited configs from asking for values that
 // make no operational sense (e.g. 1e6 concurrent subagents). Permissive enough
@@ -170,6 +175,9 @@ function sanitize(raw: unknown): SubagentsSettings {
   if (typeof r.abortResendKey === "string" && r.abortResendKey.trim() !== "") {
     out.abortResendKey = (r.abortResendKey as string).trim();
   }
+  if (typeof r.widgetDisplayMode === "string" && VALID_WIDGET_DISPLAY_MODES.has(r.widgetDisplayMode)) {
+    out.widgetDisplayMode = r.widgetDisplayMode as WidgetDisplayMode;
+  }
   return out;
 }
 
@@ -230,6 +238,7 @@ export function applySettings(s: SubagentsSettings, appliers: SettingsAppliers):
   if (s.toolDescriptionMode) appliers.setToolDescriptionMode(s.toolDescriptionMode);
   if (typeof s.waitTimeoutSeconds === "number") appliers.setWaitTimeoutSeconds(s.waitTimeoutSeconds);
   if (typeof s.abortResendKey === "string") appliers.setAbortResendKey(s.abortResendKey);
+  if (s.widgetDisplayMode) appliers.setWidgetDisplayMode(s.widgetDisplayMode);
 }
 
 /**

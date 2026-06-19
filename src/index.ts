@@ -50,6 +50,7 @@ import {
   getPromptModeLabel,
   type UICtx,
 } from "./ui/agent-widget.js";
+import type { WidgetDisplayMode } from "./ui/agent-widget-tree.js";
 import { menuSelect } from "./ui/menu-select.js";
 import { showSchedulesMenu } from "./ui/schedule-menu.js";
 import { addUsage, getLifetimeTotal, getSessionContextPercent } from "./usage.js";
@@ -457,6 +458,14 @@ export default function (pi: ExtensionAPI) {
   // Live widget: show running agents above editor
   const widget = new AgentWidget(manager, agentActivity);
 
+  // ---- Widget display configuration ----
+  let widgetDisplayMode: WidgetDisplayMode = "auto";
+  function getWidgetDisplayMode(): WidgetDisplayMode { return widgetDisplayMode; }
+  function setWidgetDisplayMode(mode: WidgetDisplayMode): void {
+    widgetDisplayMode = mode;
+    widget.setDisplayMode(mode);
+  }
+
   // ---- Join mode configuration ----
   let defaultJoinMode: JoinMode = 'async';
   function getDefaultJoinMode(): JoinMode { return defaultJoinMode; }
@@ -576,6 +585,7 @@ export default function (pi: ExtensionAPI) {
       setToolDescriptionMode: setToolDescriptionMode,
       setWaitTimeoutSeconds,
       setAbortResendKey: (key: string) => { abortResendKey = key; },
+      setWidgetDisplayMode,
     },
     (event, payload) => pi.events.emit(event, payload),
   );
@@ -1783,6 +1793,7 @@ ${systemPrompt}
       toolDescriptionMode: getToolDescriptionMode(),
       waitTimeoutSeconds: getWaitTimeoutSeconds(),
       abortResendKey: abortResendKey,
+      widgetDisplayMode: getWidgetDisplayMode(),
     };
   }
 
@@ -1853,6 +1864,13 @@ ${systemPrompt}
           values: ["full", "compact", "custom"],
         },
         {
+          id: "widgetDisplayMode",
+          label: "Widget display",
+          description: "Recursive subagent widget display: auto (rich with compact fallback), rich, or compact",
+          currentValue: getWidgetDisplayMode(),
+          values: ["auto", "rich", "compact"],
+        },
+        {
           id: "waitTimeoutSeconds",
           label: "Wait timeout",
           description: "Seconds get_subagent_result wait:true blocks before returning status (30–3600, Enter to type)",
@@ -1917,6 +1935,9 @@ ${systemPrompt}
       } else if (id === "toolDescriptionMode") {
         setToolDescriptionMode(value as ToolDescriptionMode);
         notifyApplied(ctx, `Tool description set to ${value}. Takes effect on next pi session.`);
+      } else if (id === "widgetDisplayMode") {
+        setWidgetDisplayMode(value as WidgetDisplayMode);
+        notifyApplied(ctx, `Widget display set to ${value}`);
       } else if (id === "waitTimeoutSeconds") {
         const n = parseInt(value, 10);
         if (n >= 30 && n <= 3600) {
