@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createActivityTracker } from "../src/index.js";
-import { describeActivityWithAge, formatMs, formatSessionTokens } from "../src/ui/agent-widget.js";
+import { AgentWidget, describeActivityWithAge, formatMs, formatSessionTokens } from "../src/ui/agent-widget.js";
 import { buildAgentTree, renderAgentTree, type WidgetAgentSnapshot } from "../src/ui/agent-widget-tree.js";
 
 const plainTheme = { fg: (_c: string, s: string) => s, bold: (s: string) => s };
@@ -76,6 +76,26 @@ describe("agent widget tree rendering", () => {
     const lines = renderAgentTree(records, { mode: "compact", width: 120, maxLines: 5, theme: plainTheme, frame: "⠋", now: 10_000 });
     expect(lines.length).toBeLessThanOrEqual(5);
     expect(lines.join("\n")).toMatch(/hidden|more/);
+  });
+});
+
+describe("AgentWidget recursive rendering", () => {
+  it("renders descendant snapshots that are not in the local manager", () => {
+    const manager = { listAgents: () => [snap({ id: "parent", description: "parent", status: "running" })] } as any;
+    const ui = { setStatus: vi.fn(), setWidget: vi.fn() } as any;
+    const widget = new AgentWidget(manager, new Map());
+    widget.setUICtx(ui);
+    widget.upsertSnapshot(snap({ id: "child", parentAgentId: "parent", description: "child", status: "running" }));
+    widget.upsertSnapshot(snap({ id: "grandchild", parentAgentId: "child", description: "grandchild", status: "running" }));
+
+    widget.update();
+    const factory = ui.setWidget.mock.calls.at(-1)[1];
+    const component = factory({ terminal: { columns: 120 }, requestRender: vi.fn() }, plainTheme);
+    const text = component.render().join("\n");
+
+    expect(text).toContain("parent");
+    expect(text).toContain("child");
+    expect(text).toContain("grandchild");
   });
 });
 
