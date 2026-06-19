@@ -1,6 +1,42 @@
 import { describe, expect, it } from "vitest";
 import { createActivityTracker } from "../src/index.js";
 import { describeActivityWithAge, formatMs, formatSessionTokens } from "../src/ui/agent-widget.js";
+import { buildAgentTree, type WidgetAgentSnapshot } from "../src/ui/agent-widget-tree.js";
+
+function snap(partial: Partial<WidgetAgentSnapshot> & { id: string }): WidgetAgentSnapshot {
+  return {
+    type: "general-purpose" as any,
+    description: partial.id,
+    status: "running",
+    startedAt: 1,
+    toolUses: 0,
+    ...partial,
+  };
+}
+
+describe("agent widget tree model", () => {
+  it("links parent child and grandchild records by parentAgentId", () => {
+    const tree = buildAgentTree([
+      snap({ id: "parent", depth: 1 }),
+      snap({ id: "child", parentAgentId: "parent", depth: 2 }),
+      snap({ id: "grandchild", parentAgentId: "child", depth: 3 }),
+    ]);
+
+    expect(tree.map(n => n.snapshot.id)).toEqual(["parent"]);
+    expect(tree[0].children.map(n => n.snapshot.id)).toEqual(["child"]);
+    expect(tree[0].children[0].children.map(n => n.snapshot.id)).toEqual(["grandchild"]);
+  });
+
+  it("keeps orphaned descendants visible as roots", () => {
+    const tree = buildAgentTree([
+      snap({ id: "orphan", parentAgentId: "missing-parent", depth: 3 }),
+    ]);
+
+    expect(tree).toHaveLength(1);
+    expect(tree[0].snapshot.id).toBe("orphan");
+    expect(tree[0].orphaned).toBe(true);
+  });
+});
 
 describe("formatSessionTokens", () => {
   const theme = { fg: (c: string, s: string) => `<${c}>${s}</${c}>`, bold: (s: string) => s };
