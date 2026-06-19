@@ -50,7 +50,7 @@ import {
   getPromptModeLabel,
   type UICtx,
 } from "./ui/agent-widget.js";
-import type { WidgetDisplayMode } from "./ui/agent-widget-tree.js";
+import type { WidgetAgentSnapshot, WidgetDisplayMode } from "./ui/agent-widget-tree.js";
 import { menuSelect } from "./ui/menu-select.js";
 import { showSchedulesMenu } from "./ui/schedule-menu.js";
 import { addUsage, getLifetimeTotal, getSessionContextPercent } from "./usage.js";
@@ -290,6 +290,23 @@ export default function (pi: ExtensionAPI) {
     30_000,
   );
 
+  function widgetSnapshotFromEvent(payload: any): WidgetAgentSnapshot | undefined {
+    if (!payload || typeof payload.id !== "string" || typeof payload.type !== "string") return undefined;
+    return {
+      id: payload.id,
+      type: payload.type,
+      description: String(payload.description ?? payload.type),
+      status: String(payload.status ?? "running"),
+      startedAt: typeof payload.startedAt === "number" ? payload.startedAt : Date.now(),
+      completedAt: typeof payload.completedAt === "number" ? payload.completedAt : undefined,
+      error: typeof payload.error === "string" ? payload.error : undefined,
+      toolUses: typeof payload.toolUses === "number" ? payload.toolUses : 0,
+      depth: typeof payload.depth === "number" ? payload.depth : undefined,
+      parentAgentId: typeof payload.parentAgentId === "string" ? payload.parentAgentId : undefined,
+      invocation: payload.invocation,
+    };
+  }
+
   /** Helper: build event data for lifecycle events from an AgentRecord. */
   function buildEventData(record: AgentRecord) {
     const durationMs = record.completedAt ? record.completedAt - record.startedAt : Date.now() - record.startedAt;
@@ -314,6 +331,9 @@ export default function (pi: ExtensionAPI) {
       tokens,
       depth: record.depth,
       parentAgentId: record.parentAgentId,
+      startedAt: record.startedAt,
+      completedAt: record.completedAt,
+      invocation: record.invocation,
     };
   }
 
@@ -365,6 +385,10 @@ export default function (pi: ExtensionAPI) {
       description: record.description,
       depth: record.depth,
       parentAgentId: record.parentAgentId,
+      status: "running",
+      startedAt: record.startedAt,
+      toolUses: record.toolUses,
+      invocation: record.invocation,
     });
   }, (record, info) => {
     // Emit compacted event when agent's session compacts (preserves count on record).
@@ -419,12 +443,14 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     currentCtx = ctx;
     manager.clearCompleted();
+    widget.clearSnapshots();
     retryStash.clear();
     if (isSchedulingEnabled() && !scheduler.isActive()) startScheduler(ctx);
   });
 
   pi.on("session_before_switch", () => {
     manager.clearCompleted();
+    widget.clearSnapshots();
     retryStash.clear();
     scheduler.stop();
   });
@@ -445,6 +471,9 @@ export default function (pi: ExtensionAPI) {
     unsubSpawnRpc();
     unsubStopRpc();
     unsubPingRpc();
+    unsubWidgetStarted?.();
+    unsubWidgetCompleted?.();
+    unsubWidgetFailed?.();
     currentCtx = undefined;
     delete (globalThis as any)[MANAGER_KEY];
     scheduler.stop();
@@ -457,6 +486,13 @@ export default function (pi: ExtensionAPI) {
 
   // Live widget: show running agents above editor
   const widget = new AgentWidget(manager, agentActivity);
+  const upsertWidgetEventSnapshot = (payload: unknown) => {
+    const snapshot = widgetSnapshotFromEvent(payload);
+    if (snapshot) widget.upsertSnapshot(snapshot);
+  };
+  const unsubWidgetStarted = pi.events.on("subagents:started", upsertWidgetEventSnapshot);
+  const unsubWidgetCompleted = pi.events.on("subagents:completed", upsertWidgetEventSnapshot);
+  const unsubWidgetFailed = pi.events.on("subagents:failed", upsertWidgetEventSnapshot);
 
   // ---- Widget display configuration ----
   let widgetDisplayMode: WidgetDisplayMode = "auto";
