@@ -104,18 +104,6 @@ function displayName(type: SubagentType): string {
   return getConfig(type).displayName;
 }
 
-function countRecords(nodes: WidgetTreeNode[]): number {
-  let count = 0;
-  const visit = (items: WidgetTreeNode[]) => {
-    for (const item of items) {
-      count++;
-      visit(item.children);
-    }
-  };
-  visit(nodes);
-  return count;
-}
-
 function collectRows(
   nodes: WidgetTreeNode[],
   options: RenderTreeOptions,

@@ -38,18 +38,16 @@ import { applyAndEmitLoaded, DEFAULT_WAIT_TIMEOUT_SECONDS, type SubagentsSetting
 import { getStatusNote } from "./status-note.js";
 import { type AgentConfig, type AgentInvocation, type AgentRecord, type JoinMode, MAX_RECURSIVE_DEPTH, type NotificationDetails, type SubagentType } from "./types.js";
 import { renderAgentCall, renderAgentResult, renderSteerCall, tailPreview } from "./ui/agent-tool-rendering.js";
-import { formatContextWindow } from "./ui/agent-widget.js";
-import {
+import { 
   type AgentActivity,
   type AgentDetails,
   AgentWidget,
   buildInvocationTags,
-  describeActivity,
+  describeActivity,formatContextWindow, 
   formatDuration,
   getDisplayName,
   getPromptModeLabel,
-  type UICtx,
-} from "./ui/agent-widget.js";
+  type UICtx,} from "./ui/agent-widget.js";
 import type { WidgetAgentSnapshot, WidgetDisplayMode } from "./ui/agent-widget-tree.js";
 import { menuSelect } from "./ui/menu-select.js";
 import { showSchedulesMenu } from "./ui/schedule-menu.js";
