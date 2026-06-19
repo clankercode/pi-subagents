@@ -222,6 +222,74 @@ describe("ConversationViewer", () => {
       }
     });
 
+    it("caps the near-fullscreen viewer height with a long log stream", () => {
+      const rows = 40;
+      const columns = 120;
+      const messages = Array.from({ length: 80 }, (_, i) => ({
+        role: i % 2 === 0 ? "user" : "assistant",
+        content: i % 2 === 0
+          ? `user log line ${i + 1} ${"u".repeat(80)}`
+          : [{ type: "text", text: `assistant log line ${i + 1} ${"a".repeat(80)}` }],
+      }));
+      const viewer = new ConversationViewer(
+        mockTui(rows, columns),
+        mockSession(messages),
+        mockRecord({ status: "running" }),
+        undefined,
+        ansiTheme(),
+        vi.fn(),
+      );
+      const rendered = viewer.render(columns);
+      assertAllLinesFit(rendered, columns);
+      expect(rendered).toHaveLength(28);
+      expect(rendered.at(-2)).toContain("↑↓ scroll");
+      expect(rendered.at(-2)).toContain("lines ·");
+    });
+
+    it("stays in bounds when a subagent transcript contains another subagent call", () => {
+      const rows = 40;
+      const columns = 120;
+      const filler = Array.from({ length: 34 }, (_, i) => ({
+        role: i % 2 === 0 ? "user" : "assistant",
+        content: i % 2 === 0
+          ? `filler user line ${i + 1} ${"u".repeat(90)}`
+          : [{ type: "text", text: `filler assistant line ${i + 1} ${"a".repeat(90)}` }],
+      }));
+      const nestedTranscript = [
+        "[Assistant] spawning a child agent to check the parser",
+        "[Tool: Agent] nested",
+        "[Result] " + "R".repeat(140) + " 𠮷 あ 😄",
+        "[Assistant] child agent complete",
+      ].join("\n");
+      const messages = [
+        ...filler,
+        { role: "user", content: "Delegate this, then summarize the nested result." },
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: "Spawning a subagent now." },
+            { type: "toolCall", toolUseId: "t1", name: "Agent", input: { prompt: "nested" } },
+          ],
+        },
+        { role: "toolResult", toolUseId: "t1", content: [{ type: "text", text: nestedTranscript }] },
+        { role: "assistant", content: [{ type: "text", text: "Parent agent finished after the nested child." }] },
+      ];
+      const viewer = new ConversationViewer(
+        mockTui(rows, columns),
+        mockSession(messages),
+        mockRecord({ status: "running" }),
+        undefined,
+        ansiTheme(),
+        vi.fn(),
+      );
+      const rendered = viewer.render(columns);
+      assertAllLinesFit(rendered, columns);
+      expect(rendered).toHaveLength(28);
+      expect(rendered.join("\n")).toContain("[Tool: Agent]");
+      expect(rendered.join("\n")).toContain("child agent complete");
+      expect(rendered.at(-2)).toContain("↑↓ scroll");
+    });
+
     it("no line exceeds width with mixed ANSI + unicode content", () => {
       const text = `\x1b[32m✓\x1b[0m Test passed — 日本語テスト ${"あ".repeat(50)} \x1b[33m⚠\x1b[0m`;
       const messages = [

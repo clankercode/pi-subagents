@@ -15,6 +15,8 @@ import { getLifetimeTotal, getSessionContextPercent, type LifetimeUsage, type Se
 
 /** Maximum number of rendered lines before overflow collapse kicks in. */
 const MAX_WIDGET_LINES = 12;
+/** Default cap for the status-bar text before the widget knows the terminal width. */
+const DEFAULT_STATUS_TEXT_WIDTH = 20;
 
 /** Braille spinner frames for animated running indicator. */
 export const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -174,6 +176,28 @@ export function getDisplayName(type: SubagentType): string {
 export function getPromptModeLabel(type: SubagentType): string | undefined {
   const config = getConfig(type);
   return config.promptMode === "append" ? "twin" : undefined;
+}
+
+function truncatePlainText(text: string, width: number): string {
+  if (!Number.isFinite(width) || width <= 0) return "";
+  const max = Math.floor(width);
+  if (text.length <= max) return text;
+  if (max <= 1) return "…".slice(0, max);
+  return `${text.slice(0, max - 1).trimEnd()}…`;
+}
+
+/** Status bar text for the subagents entry, truncated to the available width. */
+export function formatSubagentStatusText(
+  runningCount: number,
+  queuedCount: number,
+  width = DEFAULT_STATUS_TEXT_WIDTH,
+): string | undefined {
+  const parts: string[] = [];
+  if (runningCount > 0) parts.push(`${runningCount} running`);
+  if (queuedCount > 0) parts.push(`${queuedCount} queued`);
+  if (parts.length === 0) return undefined;
+  const total = runningCount + queuedCount;
+  return truncatePlainText(`${parts.join(", ")} agent${total === 1 ? "" : "s"}`, width);
 }
 
 /** Mode label is not included — callers add it where they want it. */
@@ -517,14 +541,10 @@ export class AgentWidget {
     }
 
     // Status bar — only call setStatus when the text actually changes
-    let newStatusText: string | undefined;
-    if (hasActive) {
-      const statusParts: string[] = [];
-      if (runningCount > 0) statusParts.push(`${runningCount} running`);
-      if (queuedCount > 0) statusParts.push(`${queuedCount} queued`);
-      const total = runningCount + queuedCount;
-      newStatusText = `${statusParts.join(", ")} agent${total === 1 ? "" : "s"}`;
-    }
+    const statusWidth = this.tui?.terminal.columns ?? DEFAULT_STATUS_TEXT_WIDTH;
+    const newStatusText = hasActive
+      ? formatSubagentStatusText(runningCount, queuedCount, statusWidth)
+      : undefined;
     if (newStatusText !== this.lastStatusText) {
       this.uiCtx.setStatus("subagents", newStatusText);
       this.lastStatusText = newStatusText;

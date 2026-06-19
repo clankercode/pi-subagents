@@ -1,4 +1,5 @@
 import { Text } from "@earendil-works/pi-tui";
+import { extractText } from "../context.js";
 import { getModelLabelFromConfig } from "../agent-tool-description.js";
 import { getAgentConfig } from "../agent-types.js";
 import { type AgentDetails, formatMs, formatTurns, getDisplayName, SPINNER } from "./agent-widget.js";
@@ -87,11 +88,15 @@ export function renderAgentCall(args: any, theme: any): Text {
   return new Text("▸ " + theme.fg("toolTitle", theme.bold(displayName)) + badges + descPart, 0, 0);
 }
 
+function getResultText(content: unknown): string {
+  if (!Array.isArray(content)) return typeof content === "string" ? content : "";
+  return extractText(content);
+}
+
 export function renderAgentResult(result: any, { expanded, isPartial }: { expanded: boolean; isPartial: boolean }, theme: any): Text {
   const details = result.details as AgentDetails | undefined;
   if (!details) {
-    const text = result.content[0]?.type === "text" ? result.content[0].text : "";
-    return new Text(text, 0, 0);
+    return new Text(getResultText(result.content), 0, 0);
   }
 
   const stats = (d: AgentDetails) => {
@@ -126,8 +131,8 @@ export function renderAgentResult(result: any, { expanded, isPartial }: { expand
     let line = icon + (s ? " " + s : "");
     line += " " + theme.fg("dim", "·") + " " + theme.fg("dim", duration);
 
+    const resultText = getResultText(result.content).trim();
     if (expanded) {
-      const resultText = result.content[0]?.type === "text" ? result.content[0].text : "";
       if (resultText) {
         for (const lineText of resultText.split("\n")) {
           line += "\n" + theme.fg("dim", `  ${lineText}`);
@@ -135,7 +140,6 @@ export function renderAgentResult(result: any, { expanded, isPartial }: { expand
       }
     } else {
       const doneText = isSteered ? "Wrapped up (turn limit)" : "Done";
-      const resultText = result.content[0]?.type === "text" ? result.content[0].text.trim() : "";
       if (resultText) {
         for (const lineText of snipMiddleLines(resultText)) {
           line += "\n" + theme.fg("dim", `  ${lineText}`);

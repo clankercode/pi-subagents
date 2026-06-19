@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { createActivityTracker } from "../src/index.js";
-import { describeActivityWithAge, formatMs, formatSessionTokens } from "../src/ui/agent-widget.js";
+import { AgentWidget, describeActivityWithAge, formatMs, formatSessionTokens, formatSubagentStatusText } from "../src/ui/agent-widget.js";
 
 describe("formatSessionTokens", () => {
   const theme = { fg: (c: string, s: string) => `<${c}>${s}</${c}>`, bold: (s: string) => s };
@@ -44,6 +45,39 @@ describe("formatMs (humanized duration)", () => {
     expect(formatMs(3_600_000)).toBe("1h");
     expect(formatMs(3_900_000)).toBe("1h 5m");
     expect(formatMs(7_470_000)).toBe("2h 4m");
+  });
+});
+
+describe("subagent status text", () => {
+  it("keeps the full status text when it fits", () => {
+    expect(formatSubagentStatusText(3, 2, 80)).toBe("3 running, 2 queued agents");
+  });
+
+  it("truncates the status text to the available width", () => {
+    const text = formatSubagentStatusText(123, 456);
+    expect(text).toBeTruthy();
+    expect(visibleWidth(text!)).toBeLessThanOrEqual(20);
+    expect(text).toContain("…");
+  });
+
+  it("feeds the truncated line into the status bar update", () => {
+    const manager = {
+      listAgents: () => [
+        { id: "a1", status: "running" },
+        { id: "a2", status: "queued" },
+        { id: "a3", status: "running" },
+        { id: "a4", status: "queued" },
+        { id: "a5", status: "running" },
+        { id: "a6", status: "queued" },
+      ],
+    } as any;
+    const ui = { setStatus: vi.fn(), setWidget: vi.fn() } as any;
+    const widget = new AgentWidget(manager, new Map());
+    widget.setUICtx(ui);
+
+    widget.update();
+
+    expect(ui.setStatus).toHaveBeenCalledWith("subagents", formatSubagentStatusText(3, 3));
   });
 });
 

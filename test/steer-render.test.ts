@@ -155,6 +155,37 @@ describe("Agent result renderResult", () => {
     expect(text).toContain("line 30");
     expect(text).not.toContain("lines omitted");
   });
+
+  it("keeps later text blocks from a multi-block result", () => {
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+
+    const rendered = tools.get("Agent").renderResult(
+      {
+        content: [
+          { type: "text", text: "[Assistant] spawning child agent" },
+          { type: "text", text: "[Tool: Agent] child-agent-id" },
+          { type: "text", text: "[Result] child agent complete" },
+        ],
+        details: {
+          displayName: "Agent",
+          description: "nested result",
+          subagentType: "general-purpose",
+          toolUses: 1,
+          tokens: "",
+          durationMs: 1000,
+          status: "completed",
+        },
+      },
+      { expanded: true, isPartial: false },
+      theme,
+    );
+
+    const text = rendered.render(200).join("\n");
+    expect(text).toContain("[Assistant] spawning child agent");
+    expect(text).toContain("[Tool: Agent] child-agent-id");
+    expect(text).toContain("[Result] child agent complete");
+  });
 });
 
 describe("Agent renderCall", () => {
