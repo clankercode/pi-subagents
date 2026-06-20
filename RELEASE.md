@@ -21,7 +21,17 @@
    git push
    ```
 
-4. **Publish**
+4. **Create a GitHub release**
+   - Tag the commit matching the version:
+     ```bash
+     git tag vX.Y.Z
+     git push origin vX.Y.Z
+     ```
+   - Open the [GitHub releases page](https://github.com/clankercode/pi-subagents/releases) and create a new release for the tag.
+   - Copy the relevant `[x.y.z]` section from `CHANGELOG.md` into the release notes.
+   - Highlight any breaking changes, fork-specific features, or upgrade notes.
+
+5. **Publish to npm**
    ```bash
    npm publish
    ```
