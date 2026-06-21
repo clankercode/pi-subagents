@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.5] - 2026-06-21
+
+### Changed
+- **Package published under `@clanker-code/pi-subagents`** — renamed from `@clankercode/pi-subagents` to use the `clanker-code` npm org. All install links, docs, and metadata updated accordingly.
+
+### Added
+- **`AGENTS.md` / `CLAUDE.md` split** — agent-facing project notes live in `AGENTS.md`; `CLAUDE.md` is now a redirect (`@AGENTS.md`).
+- **`RELEASE.md` process** — documented release checklist including GitHub release/tag creation and copying changelog notes.
+- **Fork attribution section in `README.md`** — documents that this is a fork of `tintinweb/pi-subagents` and lists fork-specific features.
+
 ## [0.10.4] - 2026-06-19
+
+### Changed
+- **Fork metadata applied** — package author, repository, homepage, bugs, and media URLs now point to the `clankercode/pi-subagents` fork.
 
 ### Fixed
 - **Subagent completion notifications now include final output and explicit retrieval guidance** — both the machine-readable XML payload and the visible custom renderer include a `get_subagent_result <id>` instruction plus the transcript file path, so the parent can read the full output/log from the notification itself.

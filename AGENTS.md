@@ -6,7 +6,7 @@ This is a fork of [`tintinweb/pi-subagents`](https://github.com/tintinweb/pi-sub
 
 - We track upstream for useful changes but do **not** auto-merge.
 - This is a pseudo-fork: cherry-pick upstream commits when they apply cleanly and fit our direction; otherwise reimplement the same behavior in our own commits.
-- `package.json`, `README.md`, and `CHANGELOG.md` must reflect this fork (`@clankercode/pi-subagents`).
+- `package.json`, `README.md`, and `CHANGELOG.md` must reflect this fork (`@clanker-code/pi-subagents`).
 
 ## Release Checklist
 

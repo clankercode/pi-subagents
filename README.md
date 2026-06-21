@@ -1,4 +1,4 @@
-# @clankercode/pi-subagents
+# @clanker-code/pi-subagents
 
 A [pi](https://pi.dev) extension that brings **Claude Code-style autonomous sub-agents** to pi. Spawn specialized agents that run in isolated background sessions — each with its own tools, system prompt, model, and thinking level. Steer them mid-run, resume completed sessions, and define your own custom agent types.
 
@@ -14,11 +14,11 @@ https://github.com/user-attachments/assets/8685261b-9338-4fea-8dfe-1c590d5df543
 
 ## About This Fork
 
-`@clankercode/pi-subagents` is a pseudo-fork of the upstream [`tintinweb/pi-subagents`](https://github.com/tintinweb/pi-subagents) project. It keeps the same core toolset but may diverge in features, defaults, and packaging.
+`@clanker-code/pi-subagents` is a pseudo-fork of the upstream [`tintinweb/pi-subagents`](https://github.com/tintinweb/pi-subagents) project. It keeps the same core toolset but may diverge in features, defaults, and packaging.
 
 ### Fork-specific differences
 
-- **Packaging under `@clankercode`** — published from this fork, not the upstream namespace.
+- **Packaging under `@clanker-code`** — published from this fork, not the upstream namespace.
 - **Completion notifications include full-output guidance** — every notification carries final output preview plus an explicit `get_subagent_result <id>` instruction and transcript path, so the parent can retrieve the full log directly from the notification.
 - Additional fork-specific changes are listed in the [CHANGELOG](./CHANGELOG.md).
 
@@ -50,7 +50,7 @@ Upstream changes are reviewed for cherry-picking when practical; otherwise they 
 ## Install
 
 ```bash
-pi install npm:@clankercode/pi-subagents
+pi install npm:@clanker-code/pi-subagents
 ```
 
 Or load directly for development:
