@@ -19,7 +19,7 @@ https://github.com/user-attachments/assets/8685261b-9338-4fea-8dfe-1c590d5df543
 ### Fork-specific differences
 
 - **Packaging under `@clanker-code`** — published from this fork, not the upstream namespace.
-- **Completion notifications include full-output guidance** — every notification carries final output preview plus an explicit `get_subagent_result <id>` instruction and transcript path, so the parent can retrieve the full log directly from the notification.
+- **Completion notifications include bounded-output guidance** — every notification carries a final output preview plus an explicit `get_subagent_result <id>` bounded-preview instruction and transcript path for full-log inspection when available.
 - Additional fork-specific changes are listed in the [CHANGELOG](./CHANGELOG.md).
 
 Upstream changes are reviewed for cherry-picking when practical; otherwise they are reimplemented to fit this fork.
@@ -41,7 +41,7 @@ Upstream changes are reviewed for cherry-picking when practical; otherwise they 
 - **Git worktree isolation** — run agents in isolated repo copies; changes auto-committed to branches on completion
 - **Skill preloading** — inject named skills into agent system prompts, discovered from `.pi/skills/`, `.agents/skills/`, and global locations (Pi-standard `<name>/SKILL.md` directory layout supported)
 - **Tool denylist** — block specific tools via `disallowed_tools` frontmatter
-- **Styled completion notifications** — background agent results render as themed, compact notification boxes (icon, stats, result preview) instead of raw XML. Expandable to show full output. Group completions render each agent individually
+- **Styled completion notifications** — background agent results render as themed, compact notification boxes (icon, stats, result preview) instead of raw XML. Expandable to show a bounded preview and transcript path. Group completions render each agent individually
 - **Event bus** — lifecycle events (`subagents:created`, `started`, `completed`, `failed`, `steered`, `compacted`) emitted via `pi.events`, enabling other extensions to react to sub-agent activity
 - **Cross-extension RPC** — other pi extensions can spawn and stop subagents via the `pi.events` event bus (`subagents:rpc:ping`, `subagents:rpc:spawn`, `subagents:rpc:stop`). Standardized reply envelopes with protocol versioning. Emits `subagents:ready` on load
 - **Schedule subagents** — pass `schedule` to the `Agent` tool to fire on cron / interval / one-shot. Session-scoped jobs with PID-locked persistence; results land via the same steering-style `subagent-notification` path as manual background completions; manage via `/agents → Scheduled jobs`

@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fork metadata applied** — package author, repository, homepage, bugs, and media URLs now point to the `clankercode/pi-subagents` fork.
 
 ### Fixed
-- **Subagent completion notifications now include final output and explicit retrieval guidance** — both the machine-readable XML payload and the visible custom renderer include a `get_subagent_result <id>` instruction plus the transcript file path, so the parent can read the full output/log from the notification itself.
+- **Subagent completion notifications now include final output previews and explicit retrieval guidance** — both the machine-readable XML payload and the visible custom renderer include a `get_subagent_result <id>` bounded-preview instruction plus the transcript file path for full-log inspection when available.
 
 ## [0.10.3] - 2026-06-12
 

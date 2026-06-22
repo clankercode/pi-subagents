@@ -30,12 +30,14 @@ export function formatTaskNotification(record: AgentRecord, resultMaxLen: number
 
   const resultPreview = record.result
     ? record.result.length > resultMaxLen
-      ? record.result.slice(0, resultMaxLen) + "\n...(truncated, use get_subagent_result for full output)"
+      ? record.result.slice(0, resultMaxLen) + (record.outputFile
+        ? "\n...(truncated, use get_subagent_result for a bounded preview or inspect the transcript file)"
+        : "\n...(truncated, use get_subagent_result for a bounded preview)")
       : record.result
     : "No output.";
   const fullOutputInstruction = record.outputFile
-    ? `Read the full output/log with get_subagent_result for agent ${record.id}, or inspect the transcript file: ${record.outputFile}`
-    : `Read the full output/log with get_subagent_result for agent ${record.id}.`;
+    ? `Read a bounded preview with get_subagent_result for agent ${record.id}, or inspect the full transcript file: ${record.outputFile}`
+    : `Read a bounded preview with get_subagent_result for agent ${record.id}.`;
 
   return [
     `<task-notification>`,
@@ -106,8 +108,8 @@ export function registerSubagentNotificationRenderer(pi: ExtensionAPI): void {
         }
 
         const fullOutputHint = d.outputFile
-          ? `full output: get_subagent_result ${d.id} or transcript: ${d.outputFile}`
-          : `full output: get_subagent_result ${d.id}`;
+          ? `bounded preview: get_subagent_result ${d.id}; full transcript: ${d.outputFile}`
+          : `bounded preview: get_subagent_result ${d.id}`;
         line += "\n  " + theme.fg("muted", fullOutputHint);
 
         return line;

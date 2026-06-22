@@ -43,6 +43,7 @@ const FIXTURE = resolve(fileURLToPath(new URL("./fixtures/e2e-probe-ext.mjs", im
 /** The fixture registers exactly this tool. */
 const EXT_TOOL = "e2e_probe";
 const BUILTINS = ["read", "bash", "edit", "write", "grep", "find", "ls"];
+const ACTIVE_TOOLS_CAPTURED = Symbol("active tools captured");
 
 /** Minimal `pi` stub — `detectEnv` only needs `exec` (returns non-git). */
 function makePi() {
@@ -108,11 +109,14 @@ describe("agent-runner end-to-end (real pi-mono session + real extension)", () =
         model,
         onSessionCreated: (s) => {
           active = s.getActiveToolNames();
+          // This e2e asserts session-construction tool gating only. Stop before
+          // prompt execution so the test cannot flake on faux-model turn timing
+          // under full-suite CPU contention.
+          throw ACTIVE_TOOLS_CAPTURED;
         },
       });
-    } catch {
-      // A no-op/erroring prompt turn is fine — the gated tool set is fixed at
-      // construction, which `onSessionCreated` already captured.
+    } catch (err) {
+      if (err !== ACTIVE_TOOLS_CAPTURED) throw err;
     }
     return active;
   }

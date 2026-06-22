@@ -281,7 +281,7 @@ export default function (pi: ExtensionAPI) {
 
         pi.sendMessage<NotificationDetails>({
           customType: "subagent-notification",
-          content: `Background agent group completed: ${label}\n\n${notifications}\n\nUse get_subagent_result for full output.`,
+          content: `Background agent group completed: ${label}\n\n${notifications}\n\nUse get_subagent_result for a bounded preview; inspect the transcript file path for full output when needed.`,
           display: true,
           details,
         }, { deliverAs: "steer", triggerTurn: true });
@@ -954,7 +954,7 @@ export default function (pi: ExtensionAPI) {
         const resumeDetails = { displayName: getDisplayName(record.type), description: record.description, subagentType: record.type, modelName: record.invocation?.modelName };
         return textResult(
           `Agent resumed in background.\nAgent ID: ${record.id}\nType: ${resumeDetails.displayName}\nDescription: ${record.description}\n\n` +
-          `You will be notified when this agent completes.\nUse get_subagent_result to retrieve full results, or steer_subagent to send it messages.\nDo not duplicate this agent's work.`,
+          `You will be notified when this agent completes.\nUse get_subagent_result to inspect bounded result previews, or steer_subagent to send it messages.\nDo not duplicate this agent's work.`,
           buildDetails(resumeDetails, record, state, { status: "background" }),
         );
       }
@@ -1039,7 +1039,7 @@ export default function (pi: ExtensionAPI) {
         `Agent ${isQueued ? "queued" : "started"} in background.\nAgent ID: ${id}\nType: ${displayName}\nDescription: ${P.description}\n` +
         (record?.outputFile ? `Output file: ${record.outputFile}\n` : "") +
         (isQueued ? `Position: queued (max ${manager.getMaxConcurrent()} concurrent)\n` : "") +
-        `\nYou will be notified when this agent completes.\nUse get_subagent_result to retrieve full results, or steer_subagent to send it messages.\nDo not duplicate this agent's work.`,
+        `\nYou will be notified when this agent completes.\nUse get_subagent_result to inspect bounded result previews, or steer_subagent to send it messages.\nDo not duplicate this agent's work.`,
         { ...detailBase, toolUses: 0, tokens: "", durationMs: 0, status: "background" as const, agentId: id },
       );
     },
@@ -1064,7 +1064,7 @@ export default function (pi: ExtensionAPI) {
       ),
       verbose: Type.Optional(
         Type.Boolean({
-          description: "If true, include the agent's full conversation (messages + tool calls). Default: false.",
+          description: "If true, include a bounded preview of the agent's conversation (messages + tool calls). Default: false.",
         }),
       ),
       peek: Type.Optional(
@@ -1129,7 +1129,7 @@ export default function (pi: ExtensionAPI) {
         const limited = limitText(record.error ?? "unknown", MAX_RESULT_CHARS);
         output += `Error: ${limited.text}`;
         if (limited.truncated) {
-          output += `\n\n---\nError truncated: omitted ${limited.omittedChars} chars.${formatOutputFileHint(record.outputFile)}`;
+          output += `\n\n---\nError truncated: omitted ${limited.omittedChars} chars. Inspect the output file for the full error when available.${formatOutputFileHint(record.outputFile)}`;
         }
       } else {
         const resultText = record.result?.trim() || "No output.";
@@ -1146,7 +1146,7 @@ export default function (pi: ExtensionAPI) {
         cancelNudge(params.agent_id);
       }
 
-      // Verbose: include full conversation
+      // Verbose: include a bounded conversation preview
       if (params.verbose && record.session) {
         const conversation = getAgentConversation(record.session);
         if (conversation) {
