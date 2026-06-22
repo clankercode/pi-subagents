@@ -271,4 +271,118 @@ describe("get_subagent_result peek", () => {
     expect(textOf(res)).toContain("result body");
     expect(textOf(res)).not.toContain("last 2 lines");
   });
+
+  it("caps an oversized peek after-range and gives a continuation hint", async () => {
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+
+    const result = Array.from({ length: 500 }, (_, i) => `line ${i + 1}`).join("\n");
+    vi.mocked(runAgent).mockResolvedValue({
+      responseText: result,
+      session: { dispose: vi.fn() } as any,
+      aborted: false,
+      steered: false,
+    });
+    const spawn = await tools.get("Agent").execute(
+      "tc", { prompt: "go", description: "d", subagent_type: "general-purpose" },
+      undefined, undefined, ctx(),
+    );
+    const id = textOf(spawn).match(/Agent ID: (\S+)/)?.[1];
+
+    const res = await tools.get("get_subagent_result").execute(
+      "tc", { agent_id: id!, peek: { after: 0 } }, undefined, undefined, ctx(),
+    );
+    const out = textOf(res);
+    expect(out).toContain("limited to 200 lines");
+    expect(out).toContain("Use peek.after: 200 to continue");
+    expect(out).toContain("[200] line 200");
+    expect(out).not.toContain("[201] line 201");
+  });
+
+  it("clamps oversized peek line counts", async () => {
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+
+    const result = Array.from({ length: 250 }, (_, i) => `line ${i + 1}`).join("\n");
+    vi.mocked(runAgent).mockResolvedValue({
+      responseText: result,
+      session: { dispose: vi.fn() } as any,
+      aborted: false,
+      steered: false,
+    });
+    const spawn = await tools.get("Agent").execute(
+      "tc", { prompt: "go", description: "d", subagent_type: "general-purpose" },
+      undefined, undefined, ctx(),
+    );
+    const id = textOf(spawn).match(/Agent ID: (\S+)/)?.[1];
+
+    const res = await tools.get("get_subagent_result").execute(
+      "tc", { agent_id: id!, peek: { lines: 999_999 } }, undefined, undefined, ctx(),
+    );
+    const out = textOf(res);
+    expect(out).toContain("last 200 lines");
+    expect(out).toContain("[51] line 51");
+    expect(out).not.toContain("[50] line 50");
+  });
+});
+
+
+describe("get_subagent_result bounded output", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("returns a bounded preview for oversized completed results and points to the output file", async () => {
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+
+    const huge = `${"x".repeat(25_000)}\nSHOULD_NOT_APPEAR`;
+    vi.mocked(runAgent).mockResolvedValue({
+      responseText: huge,
+      session: { dispose: vi.fn() } as any,
+      aborted: false,
+      steered: false,
+    });
+    const spawn = await tools.get("Agent").execute(
+      "tc", { prompt: "go", description: "d", subagent_type: "general-purpose" },
+      undefined, undefined, ctx(),
+    );
+    const id = textOf(spawn).match(/Agent ID: (\S+)/)?.[1];
+
+    const res = await tools.get("get_subagent_result").execute(
+      "tc", { agent_id: id! }, undefined, undefined, ctx(),
+    );
+    const out = textOf(res);
+    expect(out).toMatch(/Output file: .*pi-subagents-.*\.output/);
+    expect(out).toContain("Result truncated");
+    expect(out).toContain("Use peek for targeted retrieval");
+    expect(out).not.toContain("SHOULD_NOT_APPEAR");
+  });
+
+  it("bounds verbose conversation output", async () => {
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+
+    vi.mocked(runAgent).mockResolvedValue({
+      responseText: "short result",
+      session: {
+        messages: [
+          { role: "assistant", content: [{ type: "text", text: `${"y".repeat(25_000)}\nVERBOSE_SENTINEL` }] },
+        ],
+        dispose: vi.fn(),
+      } as any,
+      aborted: false,
+      steered: false,
+    });
+    const spawn = await tools.get("Agent").execute(
+      "tc", { prompt: "go", description: "d", subagent_type: "general-purpose" },
+      undefined, undefined, ctx(),
+    );
+    const id = textOf(spawn).match(/Agent ID: (\S+)/)?.[1];
+
+    const res = await tools.get("get_subagent_result").execute(
+      "tc", { agent_id: id!, verbose: true }, undefined, undefined, ctx(),
+    );
+    const out = textOf(res);
+    expect(out).toContain("Agent conversation truncated");
+    expect(out).not.toContain("VERBOSE_SENTINEL");
+  });
 });

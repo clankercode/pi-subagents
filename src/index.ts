@@ -23,6 +23,7 @@ import { AgentManager } from "./agent-manager.js";
 import { getAgentConversation, getCurrentExtensionAgentId, getCurrentExtensionDepth, getDefaultMaxTurns, getGraceTurns, normalizeMaxTurns, SUBAGENT_TOOL_NAMES, setDefaultMaxTurns, setGraceTurns, steerAgent } from "./agent-runner.js";
 import { buildAgentToolDescription, getModelLabelFromConfig } from "./agent-tool-description.js";
 import { BUILTIN_TOOL_NAMES, getAgentConfig, getAllTypes, getAvailableTypes, isDefaultsDisabled, registerAgents, resolveType, setDefaultsDisabled } from "./agent-types.js";
+import { formatOutputFileHint, limitText, MAX_RESULT_CHARS, MAX_VERBOSE_CHARS } from "./bounded-output.js";
 import { registerRpcHandlers } from "./cross-extension-rpc.js";
 import { loadCustomAgents } from "./custom-agents.js";
 import { isModelInScope, readEnabledModels, resolveEnabledModels } from "./enabled-models.js";
@@ -987,6 +988,8 @@ export default function (pi: ExtensionAPI) {
           invocation: agentInvocation,
           depth: nextSubagentDepth,
           parentAgentId: extensionAgentId,
+          outputFileForAgent: (agentId) => createOutputFilePath(ctx.cwd, agentId, ctx.sessionManager.getSessionId()),
+          onOutputFileCreated: (outputFile, agentId) => writeInitialEntry(outputFile, agentId, P.prompt!, ctx.cwd),
           ...bgCallbacks,
         });
       } catch (err) {
@@ -997,15 +1000,13 @@ export default function (pi: ExtensionAPI) {
         return retryableResult(h, err instanceof Error ? err.message : String(err), "isolation");
       }
 
-      // Set output file + join mode synchronously after spawn, before the
-      // event loop yields — onSessionCreated is async so this is safe.
+      // Set join mode synchronously after spawn. The output file path is
+      // attached inside AgentManager.spawn(), before the agent can complete.
       const joinMode = resolveJoinMode(defaultJoinMode);
       const record = manager.getRecord(id);
       if (record) {
         record.joinMode = joinMode;
         record.toolCallId = toolCallId;
-        record.outputFile = createOutputFilePath(ctx.cwd, id, ctx.sessionManager.getSessionId());
-        writeInitialEntry(record.outputFile, id, P.prompt!, ctx.cwd);
       }
 
       if (joinMode === 'async') {
@@ -1087,7 +1088,7 @@ export default function (pi: ExtensionAPI) {
         const peek = peekAgentOutput(record, params.peek as PeekOptions);
         return textResult(
           peek
-            ? `${peek.text}\n\n---\nUse verbose: true for the full conversation, or omit peek for the complete result.`
+            ? `${peek.text}\n\n---\nUse verbose: true for a bounded conversation preview, or omit peek for a bounded result preview.`
             : "No output yet for this agent.",
         );
       }
@@ -1117,15 +1118,26 @@ export default function (pi: ExtensionAPI) {
       let output =
         `Agent: ${record.id}\n` +
         `Type: ${displayName} | Status: ${record.status}${getStatusNote(record.status)} | ${statsParts.join(" | ")}\n` +
-        `Description: ${record.description}\n\n`;
+        `Description: ${record.description}\n` +
+        (record.outputFile ? `Output file: ${record.outputFile}\n` : "") +
+        `\n`;
 
       if (record.status === "running") {
         // The wait returned while the agent was still running (timeout or abort).
         output += waitTimeoutMessage(waitOutcome, getWaitTimeoutSeconds());
       } else if (record.status === "error") {
-        output += `Error: ${record.error}`;
+        const limited = limitText(record.error ?? "unknown", MAX_RESULT_CHARS);
+        output += `Error: ${limited.text}`;
+        if (limited.truncated) {
+          output += `\n\n---\nError truncated: omitted ${limited.omittedChars} chars.${formatOutputFileHint(record.outputFile)}`;
+        }
       } else {
-        output += record.result?.trim() || "No output.";
+        const resultText = record.result?.trim() || "No output.";
+        const limited = limitText(resultText, MAX_RESULT_CHARS);
+        output += limited.text;
+        if (limited.truncated) {
+          output += `\n\n---\nResult truncated: omitted ${limited.omittedChars} chars. Use peek for targeted retrieval, or inspect the output file for the full log.${formatOutputFileHint(record.outputFile)}`;
+        }
       }
 
       // Mark result as consumed — suppresses the completion notification
@@ -1138,7 +1150,11 @@ export default function (pi: ExtensionAPI) {
       if (params.verbose && record.session) {
         const conversation = getAgentConversation(record.session);
         if (conversation) {
-          output += `\n\n--- Agent Conversation ---\n${conversation}`;
+          const limited = limitText(conversation, MAX_VERBOSE_CHARS);
+          output += `\n\n--- Agent Conversation ---\n${limited.text}`;
+          if (limited.truncated) {
+            output += `\n\n---\nAgent conversation truncated: omitted ${limited.omittedChars} chars. Use peek for targeted retrieval, or inspect the output file for the full log.${formatOutputFileHint(record.outputFile)}`;
+          }
         }
       }
 

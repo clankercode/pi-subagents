@@ -279,17 +279,18 @@ Launch a sub-agent.
 | `isolation` | `"worktree"` | no | Run in an isolated git worktree |
 | `inherit_context` | boolean | no | Fork parent conversation into agent |
 
-All `Agent` calls run in the background. Completion notifications are delivered automatically; use `get_subagent_result` only when you explicitly need to check status or fetch a full result.
+All `Agent` calls run in the background. Completion notifications are delivered automatically; use `get_subagent_result` only when you explicitly need to check status or inspect a bounded result preview. Full transcripts are written to the agent output file shown in the `Agent` response and `get_subagent_result` output.
 
 ### `get_subagent_result`
 
-Check status and retrieve results from a background agent.
+Check status and retrieve bounded output from a background agent. The tool is safe-by-default for LLM context: normal results, verbose conversation output, and `peek` responses are capped. If output is truncated, the response includes the output file path and continuation guidance.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `agent_id` | string | yes | Agent ID to check |
 | `wait` | boolean | no | Wait for completion |
-| `verbose` | boolean | no | Include full conversation log |
+| `verbose` | boolean | no | Include a bounded conversation preview |
+| `peek` | object | no | Return a bounded tail/filter view with line numbers. Supports `lines`, `regex`, and `after` for incremental reads. |
 
 ### `steer_subagent`
 

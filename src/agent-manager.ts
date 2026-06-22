@@ -90,6 +90,10 @@ interface SpawnOptions {
   onToolActivity?: (activity: ToolActivity) => void;
   /** Called on streaming text deltas from the assistant response. */
   onTextDelta?: (delta: string, fullText: string) => void;
+  /** Build a per-agent output file path before the agent can complete. */
+  outputFileForAgent?: (agentId: string) => string;
+  /** Called after the output file path is attached to the record. */
+  onOutputFileCreated?: (path: string, agentId: string) => void;
   /** Called when the agent session is created (for accessing session stats). */
   onSessionCreated?: (session: AgentSession) => void;
   /** Called at the end of each agentic turn with the cumulative count. */
@@ -185,6 +189,10 @@ export class AgentManager {
       depth,
       parentAgentId: options.parentAgentId,
     };
+    if (options.outputFileForAgent) {
+      record.outputFile = options.outputFileForAgent(id);
+      options.onOutputFileCreated?.(record.outputFile, id);
+    }
     this.agents.set(id, record);
 
     const args: SpawnArgs = { pi, ctx, type, prompt, options };

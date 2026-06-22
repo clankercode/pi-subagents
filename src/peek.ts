@@ -15,6 +15,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
+import { clampPeekLines, formatOutputFileHint, limitText, MAX_PEEK_CHARS, MAX_PEEK_LINES } from "./bounded-output.js";
 import type { AgentRecord } from "./types.js";
 
 export interface PeekOptions {
@@ -35,9 +36,6 @@ export interface PeekResult {
   source: "outputFile" | "result";
 }
 
-/** Default number of tail lines when neither `after` nor `lines` is given. */
-const DEFAULT_LINES = 20;
-
 /**
  * Produce a peek view of an agent's output. Returns null when there is no
  * source content at all (the caller renders a "no output yet" message).
@@ -48,27 +46,39 @@ export function peekAgentOutput(record: AgentRecord, opts: PeekOptions = {}): Pe
 
   const regex = opts.regex ? compileRegex(opts.regex) : undefined;
   const after = typeof opts.after === "number" ? opts.after : -1;
-  const tail = typeof opts.lines === "number" && opts.lines >= 1 ? opts.lines : DEFAULT_LINES;
+  const tail = clampPeekLines(opts.lines);
 
   // Index each source line with its original position (1-based for display).
   const indexed = lines.map((text, i) => ({ no: i + 1, text }));
 
   // Filter-then-select.
   const filtered = regex ? indexed.filter((l) => regex.test(l.text)) : indexed;
-  const selected =
-    after >= 0
-      ? filtered.filter((l) => l.no > after)
-      : filtered.slice(-tail);
+  const matching = after >= 0 ? filtered.filter((l) => l.no > after) : filtered;
+  const selected = after >= 0 ? matching.slice(0, MAX_PEEK_LINES) : matching.slice(-tail);
+  const lineLimited = matching.length > selected.length;
 
   const totalLines = lines.length;
   const isRunning = record.status === "running" || record.status === "queued";
   const source: PeekResult["source"] =
     isRunning && record.outputFile && existsSync(record.outputFile) ? "outputFile" : "result";
 
-  const header = buildHeader(opts, selected.length, totalLines, source);
+  const header = buildHeader(opts, selected.length, totalLines, source, tail, lineLimited, matching.length);
   const body = selected.map((l) => `[${l.no}] ${l.text}`).join("\n");
+  const limited = limitText(body, MAX_PEEK_CHARS);
+  const lastLine = selected.at(-1)?.no;
+  const notices: string[] = [];
+  if (lineLimited && lastLine !== undefined) {
+    notices.push(`Peek limited to ${MAX_PEEK_LINES} lines from ${matching.length} matching lines. Use peek.after: ${lastLine} to continue.`);
+  }
+  if (limited.truncated) {
+    notices.push(`Peek output truncated by ${limited.omittedChars} chars. Use a smaller lines value or regex filter.${formatOutputFileHint(record.outputFile)}`);
+  }
 
-  return { text: `${header}\n\n${body}`, totalLines, source };
+  return {
+    text: `${header}\n\n${limited.text}${notices.length ? `\n\n---\n${notices.join("\n")}` : ""}`,
+    totalLines,
+    source,
+  };
 }
 
 /** Read the most useful text lines from the agent's output. */
@@ -141,13 +151,16 @@ function buildHeader(
   shown: number,
   total: number,
   source: PeekResult["source"],
+  tail: number,
+  lineLimited: boolean,
+  matching: number,
 ): string {
   const parts: string[] = [];
   if (typeof opts.after === "number") {
     parts.push(`after line number ${opts.after}`);
+    if (lineLimited) parts.push(`limited to ${MAX_PEEK_LINES} lines from ${matching} matching lines`);
   } else {
-    const n = typeof opts.lines === "number" && opts.lines >= 1 ? opts.lines : DEFAULT_LINES;
-    parts.push(`last ${n} lines`);
+    parts.push(`last ${tail} lines`);
   }
   if (opts.regex) parts.push(`filtered by regex /${opts.regex}/`);
   parts.push(`of ${total} total (${source === "outputFile" ? "live output file" : "result"})`);
