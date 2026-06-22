@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **`get_subagent_result` wait:true now detects queued user messages** — when the parent session has user messages waiting (e.g. the user typed while waiting), the tool returns early with a `pending_message` outcome instead of blocking for the full wait timeout. The queued message is delivered to the parent LLM immediately. Uses `ctx.hasPendingMessages()` polling during the wait. The subagent continues running undisturbed.
+
 ## [0.10.7] - 2026-06-23
 
 ### Fixed

@@ -37,7 +37,7 @@ function makePi() {
   return { pi, tools, eventHandlers };
 }
 
-function ctx() {
+function ctx(overrides?: { hasPendingMessages?: () => boolean }) {
   return {
     hasUI: false,
     ui: { setStatus: vi.fn(), setWidget: vi.fn(), notify: vi.fn() },
@@ -46,6 +46,7 @@ function ctx() {
     modelRegistry: { find: vi.fn(), getAvailable: vi.fn(() => []) },
     sessionManager: { getSessionId: vi.fn(() => "s1"), getBranch: vi.fn(() => []) },
     getSystemPrompt: vi.fn(() => "parent"),
+    hasPendingMessages: overrides?.hasPendingMessages,
   } as any;
 }
 
@@ -326,6 +327,139 @@ describe("get_subagent_result peek", () => {
   });
 });
 
+
+describe("get_subagent_result pending message detection", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("wait:true returns early when hasPendingMessages() becomes true", async () => {
+    vi.useFakeTimers();
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+
+    const { id, resolveRun } = await spawnControllable(tools, vi.mocked(runAgent));
+
+    // hasPendingMessages starts false, flips to true after 2s.
+    let pending = false;
+    const testCtx = ctx({ hasPendingMessages: () => pending });
+    setTimeout(() => { pending = true; }, 2000);
+
+    const waitPromise = tools.get("get_subagent_result").execute(
+      "tc-wait", { agent_id: id, wait: true }, undefined, undefined, testCtx,
+    );
+
+    // Advance past the 2s flip point + 1s poll interval.
+    await vi.advanceTimersByTimeAsync(3500);
+
+    const res = await waitPromise;
+    const out = textOf(res);
+    expect(out).toContain("still running");
+    expect(out).toMatch(/interrupted by an incoming user message/i);
+    expect(out).toContain("NOT stopped");
+    expect(out).toContain("queued message will be delivered");
+
+    // Subagent was NOT aborted — resolving it later still works.
+    resolveRun({ responseText: "LATE", session: { dispose: vi.fn() }, aborted: false, steered: false });
+    vi.useRealTimers();
+  });
+
+  it("wait:true returns early immediately if hasPendingMessages() is already true", async () => {
+    vi.useFakeTimers();
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+
+    const { id } = await spawnControllable(tools, vi.mocked(runAgent));
+
+    // Already has pending messages.
+    const testCtx = ctx({ hasPendingMessages: () => true });
+
+    const waitPromise = tools.get("get_subagent_result").execute(
+      "tc-wait", { agent_id: id, wait: true }, undefined, undefined, testCtx,
+    );
+
+    // Advance just enough for the immediate check + microtask.
+    await vi.advanceTimersByTimeAsync(100);
+
+    const res = await waitPromise;
+    const out = textOf(res);
+    expect(out).toMatch(/interrupted by an incoming user message/i);
+    vi.useRealTimers();
+  });
+
+  it("wait:true does not trigger pending check when ctx lacks hasPendingMessages", async () => {
+    vi.useFakeTimers();
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+
+    const { id } = await spawnControllable(tools, vi.mocked(runAgent));
+
+    // ctx without hasPendingMessages (like non-TUI modes).
+    const testCtx = ctx();
+    const waitPromise = tools.get("get_subagent_result").execute(
+      "tc-wait", { agent_id: id, wait: true }, undefined, undefined, testCtx,
+    );
+
+    // Let it timeout normally.
+    await vi.advanceTimersByTimeAsync(DEFAULT_WAIT_TIMEOUT_SECONDS * 1000 + 50);
+
+    const res = await waitPromise;
+    const out = textOf(res);
+    expect(out).toMatch(/timed out/i);
+    expect(out).not.toMatch(/interrupted/i);
+    vi.useRealTimers();
+  });
+
+  it("wait:true timeout still works when hasPendingMessages never fires", async () => {
+    vi.useFakeTimers();
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+
+    const { id } = await spawnControllable(tools, vi.mocked(runAgent));
+
+    const testCtx = ctx({ hasPendingMessages: () => false });
+    const waitPromise = tools.get("get_subagent_result").execute(
+      "tc-wait", { agent_id: id, wait: true }, undefined, undefined, testCtx,
+    );
+
+    await vi.advanceTimersByTimeAsync(DEFAULT_WAIT_TIMEOUT_SECONDS * 1000 + 50);
+
+    const res = await waitPromise;
+    const out = textOf(res);
+    expect(out).toMatch(/timed out/i);
+    vi.useRealTimers();
+  });
+
+  it("wait:true pending message does not suppress the eventual completion notification", async () => {
+    vi.useFakeTimers();
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+
+    const { id, resolveRun } = await spawnControllable(tools, vi.mocked(runAgent));
+
+    let pending = false;
+    const testCtx = ctx({ hasPendingMessages: () => pending });
+    setTimeout(() => { pending = true; }, 1000);
+
+    const waitPromise = tools.get("get_subagent_result").execute(
+      "tc-wait", { agent_id: id, wait: true }, undefined, undefined, testCtx,
+    );
+
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(textOf(await waitPromise)).toMatch(/interrupted/i);
+
+    // Subagent completes later.
+    resolveRun({ responseText: "LATE_RESULT", session: { dispose: vi.fn() }, aborted: false, steered: false });
+    await vi.advanceTimersByTimeAsync(250);
+
+    expect(pi.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        customType: "subagent-notification",
+        content: expect.stringContaining("LATE_RESULT"),
+      }),
+      expect.objectContaining({ deliverAs: "steer", triggerTurn: true }),
+    );
+    vi.useRealTimers();
+  });
+});
 
 describe("get_subagent_result bounded output", () => {
   afterEach(() => vi.restoreAllMocks());

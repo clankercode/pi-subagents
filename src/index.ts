@@ -55,7 +55,7 @@ import type { WidgetAgentSnapshot, WidgetDisplayMode } from "./ui/agent-widget-t
 import { menuSelect } from "./ui/menu-select.js";
 import { showSchedulesMenu } from "./ui/schedule-menu.js";
 import { addUsage, getLifetimeTotal, getSessionContextPercent } from "./usage.js";
-import { formatWaitTimeout, raceWait, type WaitOutcome, waitTimeoutMessage } from "./wait.js";
+import { formatWaitTimeout, pollPendingMessages, raceWait, type WaitOutcome, waitTimeoutMessage } from "./wait.js";
 
 // ---- Shared helpers ----
 
@@ -1077,7 +1077,7 @@ export default function (pi: ExtensionAPI) {
         }),
       ),
     }),
-    execute: async (_toolCallId, params, signal, _onUpdate, _ctx) => {
+    execute: async (_toolCallId, params, signal, _onUpdate, ctx) => {
       const record = manager.getRecord(params.agent_id);
       if (!record) {
         return textResult(`Agent not found: "${params.agent_id}". It may have been cleaned up.`);
@@ -1099,7 +1099,17 @@ export default function (pi: ExtensionAPI) {
       let waitOutcome: WaitOutcome = "completed";
       if (params.wait && record.status === "running" && record.promise) {
         cancelNudge(params.agent_id);
-        waitOutcome = await raceWait(record.promise, signal, getWaitTimeoutSeconds());
+        // Poll for queued user messages so we can return early and let the
+        // parent LLM process them immediately instead of blocking for the
+        // full wait timeout.
+        const pending = typeof ctx?.hasPendingMessages === "function"
+          ? pollPendingMessages(() => ctx.hasPendingMessages())
+          : undefined;
+        try {
+          waitOutcome = await raceWait(record.promise, signal, getWaitTimeoutSeconds(), pending?.promise);
+        } finally {
+          pending?.cancel();
+        }
         if (waitOutcome === "completed") {
           record.resultConsumed = true;
         }
