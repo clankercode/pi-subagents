@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.6] - 2026-06-22
+
+### Changed
+- **Release workflow test** — patch bump to verify the tag-driven CI publish and GitHub Release creation.
+
 ## [0.10.5] - 2026-06-21
 
 ### Changed
