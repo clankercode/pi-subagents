@@ -25,6 +25,8 @@ One-time npm setup for CI publishing:
 npm trust github @clanker-code/pi-subagents --repo=clankercode/pi-subagents --file=release.yml
 ```
 
+If `npm trust` fails, open `https://www.npmjs.com/package/@clanker-code/pi-subagents/access` and add a GitHub Actions trusted publisher for the `release.yml` workflow.
+
 See the general guide at `~/.llm-general/npm-autopublish-via-ci.md` for other repos.
 
 ## Keeping Upstream In Sync
