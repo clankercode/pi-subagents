@@ -22,7 +22,7 @@ Every release must:
 One-time npm setup for CI publishing:
 
 ```bash
-npm trust github @clanker-code/pi-subagents --repo=clankercode/pi-subagents --file=.github/workflows/release.yml
+npm trust github @clanker-code/pi-subagents --repo=clankercode/pi-subagents --file=release.yml
 ```
 
 See the general guide at `~/.llm-general/npm-autopublish-via-ci.md` for other repos.

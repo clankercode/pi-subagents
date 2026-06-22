@@ -35,7 +35,7 @@
 
 One-time npm trusted-publisher setup:
 ```bash
-npm trust github @clanker-code/pi-subagents --repo=clankercode/pi-subagents --file=.github/workflows/release.yml
+npm trust github @clanker-code/pi-subagents --repo=clankercode/pi-subagents --file=release.yml
 ```
 See `~/.llm-general/npm-autopublish-via-ci.md` for general instructions.
 
