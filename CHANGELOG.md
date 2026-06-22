@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.7] - 2026-06-23
+
 ### Fixed
 - **`get_subagent_result` output is now bounded** — normal result previews, `verbose: true` conversation previews, and `peek` responses are capped so a large subagent transcript cannot flood the parent context. Truncated responses include the omitted size, continuation guidance, and the agent output file path for full-log inspection. Output files are now attached to background records before the agent can complete, avoiding a fast-completion race where retrieval guidance could miss the transcript path.
+- **Agent-runner e2e no longer waits on an unnecessary prompt turn** — the real-runtime tool-gating test now stops after capturing active tools at session construction, avoiding intermittent 30s timeouts under full-suite load.
 
 ## [0.10.6] - 2026-06-22
 
