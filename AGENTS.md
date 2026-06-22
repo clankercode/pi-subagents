@@ -17,7 +17,15 @@ Every release must:
 3. **Update `README.md` to document any new or changed user-facing features.**
 4. Run and pass: `npm run lint`, `npm run typecheck`, `npm test`, `npm run build`.
 5. Commit and push.
-6. User publishes with `npm publish` from a clean `master` checkout.
+6. Push a `vX.Y.Z` tag. The `release.yml` workflow then publishes to npm and creates a GitHub Release automatically.
+
+One-time npm setup for CI publishing:
+
+```bash
+npm trust github @clanker-code/pi-subagents --repo=clankercode/pi-subagents --file=.github/workflows/release.yml
+```
+
+See the general guide at `~/.llm-general/npm-autopublish-via-ci.md` for other repos.
 
 ## Keeping Upstream In Sync
 

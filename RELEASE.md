@@ -21,19 +21,22 @@
    git push
    ```
 
-4. **Create a GitHub release**
-   - Tag the commit matching the version:
-     ```bash
-     git tag vX.Y.Z
-     git push origin vX.Y.Z
-     ```
-   - Open the [GitHub releases page](https://github.com/clankercode/pi-subagents/releases) and create a new release for the tag.
-   - Copy the relevant `[x.y.z]` section from `CHANGELOG.md` into the release notes.
-   - Highlight any breaking changes, fork-specific features, or upgrade notes.
-
-5. **Publish to npm**
+4. **Push the version tag**
+   The `release.yml` workflow publishes to npm and creates the GitHub Release automatically:
    ```bash
-   npm publish
+   git tag vX.Y.Z
+   git push origin vX.Y.Z
    ```
+
+5. **Verify**
+   - Check the [Actions run](https://github.com/clankercode/pi-subagents/actions) succeeded.
+   - Confirm the package version appears on npm: `npm view @clanker-code/pi-subagents`.
+   - Confirm the GitHub Release has the changelog notes.
+
+One-time npm trusted-publisher setup:
+```bash
+npm trust github @clanker-code/pi-subagents --repo=clankercode/pi-subagents --file=.github/workflows/release.yml
+```
+See `~/.llm-general/npm-autopublish-via-ci.md` for general instructions.
 
 > Note: `prepublishOnly` already runs lint, typecheck, tests, and build before publishing.
