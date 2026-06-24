@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Built-in `Explore` no longer pins Haiku** — the default Explore agent now inherits the parent/session model unless the caller or a custom agent definition supplies a model.
 
 ### Fixed
-- **Nested subagents now appear in the live widget as soon as they are created** — the widget listens to `subagents:created` lifecycle events in addition to started/completed/failed updates, so recursively spawned agents can raise the visible depth/hierarchy immediately instead of waiting for later status events.
+- **Nested subagents now appear in the live widget as soon as they are created** — the widget listens to `subagents:created` lifecycle events in addition to started/completed/failed updates, and created events now include record status metadata so queued recursive agents do not render as running while waiting.
 - **`get_subagent_result` peek now bounds embedded multiline output by rendered lines** — JSONL transcript entries whose text blocks contain newlines are split before `peek.lines`, `peek.after`, regex filtering, and character truncation are applied, preventing a small requested line count from returning huge multiline tool/file output records.
 
 ## [0.10.8] - 2026-06-23

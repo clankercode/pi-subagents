@@ -90,6 +90,26 @@ describe("Agent retry handle (recoverable invocation)", () => {
     expect(out).toMatch(/do NOT need to retype the prompt/i);
   });
 
+  it("created lifecycle event reports queued status when concurrency is saturated", async () => {
+    vi.mocked(runAgent).mockImplementation(() => new Promise(() => {}));
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+
+    for (let i = 0; i < 5; i++) {
+      await tools.get("Agent").execute(
+        `tc-${i}`,
+        { prompt: `P${i}`, description: `agent ${i}`, subagent_type: "general-purpose" },
+        undefined, undefined, ctx(),
+      );
+    }
+
+    const createdEvents = vi.mocked(pi.events.emit).mock.calls
+      .filter(([event]) => event === "subagents:created")
+      .map(([, payload]) => payload as any);
+    expect(createdEvents).toHaveLength(5);
+    expect(createdEvents.at(-1)).toMatchObject({ description: "agent 4", status: "queued" });
+  });
+
   it("retry with a valid model spawns successfully and preserves the prompt", async () => {
     vi.mocked(runAgent).mockResolvedValue({
       responseText: "PRESERVED OUTPUT",

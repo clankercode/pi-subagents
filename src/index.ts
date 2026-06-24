@@ -1032,6 +1032,10 @@ export default function (pi: ExtensionAPI) {
         isBackground: true,
         depth: record?.depth ?? nextSubagentDepth,
         parentAgentId: extensionAgentId,
+        status: record?.status ?? "running",
+        startedAt: record?.startedAt,
+        toolUses: record?.toolUses ?? 0,
+        invocation: record?.invocation,
       });
 
       const isQueued = record?.status === "queued";
