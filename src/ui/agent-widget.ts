@@ -26,7 +26,7 @@ const DEFAULT_STATUS_TEXT_WIDTH = 20;
 export const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 /** Statuses that indicate an error/non-success outcome (used for linger behavior and icon rendering). */
-export const ERROR_STATUSES = new Set(["error", "aborted", "steered", "stopped"]);
+export const ERROR_STATUSES = new Set(["error", "aborted", "stopped"]);
 
 /** Tool name → human-readable action for activity descriptions. */
 const TOOL_DISPLAY: Record<string, string> = {
@@ -412,12 +412,15 @@ export class AgentWidget {
         merged.set(a.id, this.recordToSnapshot(a));
       }
     }
+    const liveRecordIds = new Set(allAgents.map(a => a.id));
     for (const [id, snapshot] of merged) {
       if (snapshot.status !== "running" && snapshot.status !== "queued" && !this.shouldShowFinished(id, snapshot.status, snapshot.completedAt)) {
         merged.delete(id);
         if (this.descendantSnapshots.has(id)) this.descendantSnapshots.delete(id);
-        this.finishedTurnAge.delete(id);
-        this.finishedAt.delete(id);
+        if (!liveRecordIds.has(id)) {
+          this.finishedTurnAge.delete(id);
+          this.finishedAt.delete(id);
+        }
       }
     }
     return [...merged.values()];
@@ -525,6 +528,10 @@ export class AgentWidget {
     }
     this.widgetRegistered = false;
     this.tui = undefined;
+    this.uiCtx = undefined;
     this.lastStatusText = undefined;
+    this.descendantSnapshots.clear();
+    this.finishedTurnAge.clear();
+    this.finishedAt.clear();
   }
 }

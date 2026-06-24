@@ -82,10 +82,59 @@ describe("agent widget tree rendering", () => {
     expect(lines.length).toBeLessThanOrEqual(5);
     expect(lines.join("\n")).toMatch(/hidden|more/);
   });
+
+  it("labels forced-rich overflow as hidden lines, not hidden agents", () => {
+    const lines = renderAgentTree([
+      snap({ id: "agent", description: "one running agent" }),
+    ], { mode: "rich", width: 120, maxLines: 2, theme: plainTheme, frame: "⠋", now: 10_000 });
+
+    const text = lines.join("\n");
+    expect(text).toContain("more lines hidden");
+    expect(text).not.toContain("more agents hidden");
+  });
+
+  it("renders steered agents as successful wrapped-up completions", () => {
+    const lines = renderAgentTree([
+      snap({ id: "steered", description: "wrapped up", status: "steered", completedAt: 5_000 }),
+    ], { mode: "compact", width: 120, maxLines: 5, theme: plainTheme, frame: "⠋", now: 10_000 });
+
+    expect(lines.join("\n")).toContain("✓ Agent  wrapped up");
+  });
+
+  it("lingers steered agents like successful completions, not errors", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const manager = { listAgents: () => [] } as any;
+    const ui = { setStatus: vi.fn(), setWidget: vi.fn() } as any;
+    const widget = new AgentWidget(manager, new Map());
+    widget.setUICtx(ui);
+    widget.upsertSnapshot(snap({
+      id: "steered",
+      description: "wrapped up",
+      status: "steered",
+      completedAt: 1_000,
+    }));
+
+    const factory = ui.setWidget.mock.calls.at(-1)[1];
+    const component = factory({ terminal: { columns: 120 }, requestRender: vi.fn() }, plainTheme);
+    expect(component.render().join("\n")).toContain("wrapped up");
+
+    widget.onTurnStart();
+    expect(ui.setWidget).toHaveBeenLastCalledWith("agents", undefined);
+  });
+
+  it("shows terminal row duration instead of continuing to age completed rows", () => {
+    const lines = renderAgentTree([
+      snap({ id: "done", description: "done", status: "completed", startedAt: 1_000, completedAt: 6_000 }),
+    ], { mode: "compact", width: 120, maxLines: 5, theme: plainTheme, frame: "⠋", now: 60_000 });
+
+    expect(lines.join("\n")).toContain("· 5s");
+    expect(lines.join("\n")).not.toContain("59s");
+  });
 });
 
 describe("AgentWidget recursive rendering", () => {
-  it("wires created lifecycle events into descendant widget snapshots", async () => {
+  function setupExtensionWidgetHarness() {
     const extensionHandlers = new Map<string, any>();
     const sessionHandlers = new Map<string, any>();
     const pi = {
@@ -108,6 +157,11 @@ describe("AgentWidget recursive rendering", () => {
       sendMessage: vi.fn(),
     } as any;
     subagentsExtension(pi);
+    return { extensionHandlers, sessionHandlers, pi };
+  }
+
+  it("wires created lifecycle events into descendant widget snapshots", async () => {
+    const { extensionHandlers, sessionHandlers } = setupExtensionWidgetHarness();
 
     const ui = { setStatus: vi.fn(), setWidget: vi.fn() } as any;
     await sessionHandlers.get("tool_execution_start")?.({}, { ui });
@@ -129,6 +183,27 @@ describe("AgentWidget recursive rendering", () => {
     const text = component.render(120).join("\n");
     expect(text).toContain("nested sleeper");
     expect(text).toContain("depth 2/4");
+  });
+
+  it("clears the widget on session shutdown", async () => {
+    const { extensionHandlers, sessionHandlers } = setupExtensionWidgetHarness();
+    const ui = { setStatus: vi.fn(), setWidget: vi.fn() } as any;
+    await sessionHandlers.get("tool_execution_start")?.({}, { ui });
+
+    extensionHandlers.get("subagents:created")?.({
+      id: "child",
+      type: "general-purpose",
+      description: "nested sleeper",
+      depth: 2,
+      parentAgentId: "parent",
+      startedAt: 10,
+    });
+    expect(ui.setWidget).toHaveBeenCalledWith("agents", expect.any(Function), { placement: "aboveEditor" });
+
+    await sessionHandlers.get("session_shutdown")?.();
+
+    expect(ui.setWidget).toHaveBeenLastCalledWith("agents", undefined);
+    expect(ui.setStatus).toHaveBeenLastCalledWith("subagents", undefined);
   });
 
   it("ages completed descendant snapshots out after their turn linger window", () => {
@@ -178,6 +253,48 @@ describe("AgentWidget recursive rendering", () => {
 
     vi.advanceTimersByTime(60_000);
     expect(component.render().join("\n")).not.toContain("done child");
+  });
+
+  it("does not resurrect a turn-expired local manager record before wall-clock expiry", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const doneRecord = snap({
+      id: "done-local",
+      description: "done local",
+      status: "completed",
+      startedAt: 1,
+      completedAt: 1_000,
+    });
+    const manager = { listAgents: () => [doneRecord, snap({ id: "runner", description: "still running", status: "running", startedAt: 1_000 })] } as any;
+    const ui = { setStatus: vi.fn(), setWidget: vi.fn() } as any;
+    const widget = new AgentWidget(manager, new Map());
+    widget.setUICtx(ui);
+    widget.upsertSnapshot(doneRecord);
+
+    const factory = ui.setWidget.mock.calls.at(-1)[1];
+    const component = factory({ terminal: { columns: 120 }, requestRender: vi.fn() }, plainTheme);
+    expect(component.render().join("\n")).toContain("done local");
+
+    widget.onTurnStart();
+    expect(component.render().join("\n")).not.toContain("done local");
+
+    vi.advanceTimersByTime(80);
+    expect(component.render().join("\n")).not.toContain("done local");
+  });
+
+  it("does not re-register on an old UI context after dispose", () => {
+    const manager = { listAgents: () => [] } as any;
+    const ui = { setStatus: vi.fn(), setWidget: vi.fn() } as any;
+    const widget = new AgentWidget(manager, new Map());
+    widget.setUICtx(ui);
+    widget.upsertSnapshot(snap({ id: "child", description: "child running", status: "running" }));
+    expect(ui.setWidget).toHaveBeenCalledWith("agents", expect.any(Function), { placement: "aboveEditor" });
+
+    widget.dispose();
+    ui.setWidget.mockClear();
+    widget.upsertSnapshot(snap({ id: "late", description: "late completion", status: "completed", completedAt: Date.now() }));
+
+    expect(ui.setWidget).not.toHaveBeenCalled();
   });
 
   it("starts the widget timer for descendant snapshots so spinners keep animating", () => {

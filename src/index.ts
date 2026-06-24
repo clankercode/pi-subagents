@@ -443,6 +443,8 @@ export default function (pi: ExtensionAPI) {
   // Capture ctx from session_start for RPC spawn handler + start the scheduler.
   pi.on("session_start", async (_event, ctx) => {
     currentCtx = ctx;
+    clearBatchState();
+    groupJoin.dispose();
     manager.clearCompleted();
     widget.clearSnapshots();
     retryStash.clear();
@@ -450,8 +452,10 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_before_switch", () => {
+    clearBatchState();
+    groupJoin.dispose();
     manager.clearCompleted();
-    widget.clearSnapshots();
+    widget.dispose();
     retryStash.clear();
     scheduler.stop();
   });
@@ -479,7 +483,10 @@ export default function (pi: ExtensionAPI) {
     currentCtx = undefined;
     delete (globalThis as any)[MANAGER_KEY];
     scheduler.stop();
+    clearBatchState();
+    groupJoin.dispose();
     manager.abortAll();
+    widget.dispose();
     for (const timer of pendingNudges.values()) clearTimeout(timer);
     pendingNudges.clear();
     retryStash.clear();
@@ -568,6 +575,14 @@ export default function (pi: ExtensionAPI) {
   let currentBatchAgents: { id: string; joinMode: JoinMode }[] = [];
   let batchFinalizeTimer: ReturnType<typeof setTimeout> | undefined;
   let batchCounter = 0;
+
+  function clearBatchState() {
+    if (batchFinalizeTimer) {
+      clearTimeout(batchFinalizeTimer);
+      batchFinalizeTimer = undefined;
+    }
+    currentBatchAgents = [];
+  }
 
   /** Finalize the current batch: if 2+ smart-mode agents, register as a group. */
   function finalizeBatch() {

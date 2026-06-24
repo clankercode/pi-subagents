@@ -96,6 +96,7 @@ function statusIcon(snapshot: WidgetAgentSnapshot, frame: string, theme: Theme):
   if (snapshot.status === "running") return theme.fg("accent", frame);
   if (snapshot.status === "queued") return theme.fg("muted", "◦");
   if (snapshot.status === "completed") return theme.fg("success", "✓");
+  if (snapshot.status === "steered") return theme.fg("warning", "✓");
   if (snapshot.status === "stopped") return theme.fg("dim", "■");
   return theme.fg("error", "✗");
 }
@@ -117,7 +118,8 @@ function collectRows(
     const childPrefix = prefix + (isLast ? "   " : "│  ");
     const s = node.snapshot;
     const name = displayName(s.type);
-    const elapsed = formatElapsed(s.startedAt, options.now ?? Date.now());
+    const elapsedUntil = s.status === "running" || s.status === "queued" ? (options.now ?? Date.now()) : (s.completedAt ?? options.now ?? Date.now());
+    const elapsed = formatElapsed(s.startedAt, elapsedUntil);
     const stats: string[] = [];
     if (s.activity?.turnCount) stats.push(`↻${s.activity.turnCount}`);
     if (s.toolUses > 0) stats.push(`${s.toolUses} tool${s.toolUses === 1 ? "" : "s"}`);
@@ -165,5 +167,5 @@ export function renderAgentTree(records: WidgetAgentSnapshot[], options: RenderT
     ? options.theme.fg("dim", ` ${active} running · ${queued} queued · depth ${maxDepth}/4`)
     : "";
   const heading = `${active > 0 ? options.theme.fg("accent", "●") : options.theme.fg("dim", "○")} ${options.theme.fg(active > 0 ? "accent" : "dim", "Agents")}${suffix}`;
-  return applyOverflow([heading, ...rows], options.maxLines, options.width);
+  return applyOverflow([heading, ...rows], options.maxLines, options.width, mode === "rich" ? "lines" : "agents");
 }

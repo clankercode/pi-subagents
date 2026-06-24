@@ -126,6 +126,10 @@ export class AgentManager {
   private queue: { id: string; args: SpawnArgs }[] = [];
   /** Number of currently running background agents. */
   private runningBackground = 0;
+  /** Background agents by id; foreground agents must not emit background completion callbacks. */
+  private backgroundAgentIds = new Set<string>();
+  /** Background terminal callbacks already emitted; prevents abort/settle double delivery. */
+  private completedBackgroundCallbacks = new Set<string>();
 
   constructor(
     onComplete?: OnAgentComplete,
@@ -194,6 +198,7 @@ export class AgentManager {
       options.onOutputFileCreated?.(record.outputFile, id);
     }
     this.agents.set(id, record);
+    if (options.isBackground) this.backgroundAgentIds.add(id);
 
     const args: SpawnArgs = { pi, ctx, type, prompt, options };
 
@@ -208,10 +213,20 @@ export class AgentManager {
     try {
       this.startAgent(id, record, args);
     } catch (err) {
+      this.backgroundAgentIds.delete(id);
       this.agents.delete(id);
       throw err;
     }
     return id;
+  }
+
+  /** Emit background completion once, optionally releasing a running concurrency slot. */
+  private completeBackground(record: AgentRecord, releaseRunningSlot: boolean, drain = true): void {
+    if (this.completedBackgroundCallbacks.has(record.id)) return;
+    this.completedBackgroundCallbacks.add(record.id);
+    if (releaseRunningSlot) this.runningBackground = Math.max(0, this.runningBackground - 1);
+    try { this.onComplete?.(record); } catch { /* ignore completion side-effect errors */ }
+    if (drain) this.drainQueue();
   }
 
   /** Actually start an agent (called immediately or from queue drain). */
@@ -338,9 +353,7 @@ export class AgentManager {
         }
 
         if (options.isBackground) {
-          this.runningBackground--;
-          try { this.onComplete?.(record); } catch { /* ignore completion side-effect errors */ }
-          this.drainQueue();
+          this.completeBackground(record, true);
         }
         return responseText;
       })
@@ -369,9 +382,7 @@ export class AgentManager {
         }
 
         if (options.isBackground) {
-          this.runningBackground--;
-          this.onComplete?.(record);
-          this.drainQueue();
+          this.completeBackground(record, true);
         }
         return "";
       });
@@ -393,7 +404,7 @@ export class AgentManager {
         record.status = "error";
         record.error = err instanceof Error ? err.message : String(err);
         record.completedAt = Date.now();
-        this.onComplete?.(record);
+        this.completeBackground(record, false, false);
       }
     }
   }
@@ -434,6 +445,8 @@ export class AgentManager {
     record.error = undefined;
     record.resultConsumed = false;
     record.abortController = new AbortController();
+    this.backgroundAgentIds.add(id);
+    this.completedBackgroundCallbacks.delete(id);
     this.runningBackground++;
     this.onStart?.(record);
 
@@ -463,18 +476,14 @@ export class AgentManager {
       record.result = responseText;
       record.completedAt = Date.now();
       detach();
-      this.runningBackground--;
-      try { this.onComplete?.(record); } catch { /* ignore completion side-effect errors */ }
-      this.drainQueue();
+      this.completeBackground(record, true);
       return responseText;
     }).catch((err) => {
       if (record.status !== "stopped") record.status = "error";
       record.error = err instanceof Error ? err.message : String(err);
       record.completedAt = Date.now();
       detach();
-      this.runningBackground--;
-      try { this.onComplete?.(record); } catch { /* ignore completion side-effect errors */ }
-      this.drainQueue();
+      this.completeBackground(record, true);
       return "";
     });
 
@@ -501,6 +510,7 @@ export class AgentManager {
       this.queue = this.queue.filter(q => q.id !== id);
       record.status = "stopped";
       record.completedAt = Date.now();
+      this.completeBackground(record, false);
       return true;
     }
 
@@ -508,6 +518,7 @@ export class AgentManager {
     record.abortController?.abort();
     record.status = "stopped";
     record.completedAt = Date.now();
+    if (this.backgroundAgentIds.has(id)) this.completeBackground(record, true);
     return true;
   }
 
@@ -515,6 +526,8 @@ export class AgentManager {
   private removeRecord(id: string, record: AgentRecord): void {
     record.session?.dispose?.();
     record.session = undefined;
+    this.backgroundAgentIds.delete(id);
+    this.completedBackgroundCallbacks.delete(id);
     this.agents.delete(id);
   }
 
@@ -567,6 +580,7 @@ export class AgentManager {
       if (record) {
         record.status = "stopped";
         record.completedAt = Date.now();
+        if (this.backgroundAgentIds.has(record.id)) this.completedBackgroundCallbacks.add(record.id);
         count++;
       }
     }
@@ -577,9 +591,11 @@ export class AgentManager {
         record.abortController?.abort();
         record.status = "stopped";
         record.completedAt = Date.now();
+        if (this.backgroundAgentIds.has(record.id)) this.completedBackgroundCallbacks.add(record.id);
         count++;
       }
     }
+    this.runningBackground = 0;
     return count;
   }
 
@@ -606,6 +622,8 @@ export class AgentManager {
       record.session?.dispose();
     }
     this.agents.clear();
+    this.backgroundAgentIds.clear();
+    this.completedBackgroundCallbacks.clear();
     // Prune any orphaned git worktrees (crash recovery)
     try { pruneWorktrees(process.cwd()); } catch { /* ignore */ }
     // Also prune repos that caller-supplied cwds created worktrees in — a clean

@@ -535,9 +535,10 @@ describe("AgentManager — abort() state machine", () => {
     expect(manager.abort("does-not-exist")).toBe(false);
   });
 
-  it("removes a queued agent from the queue and marks it stopped", () => {
+  it("removes a queued agent from the queue, marks it stopped, and emits completion", () => {
     // Concurrency=1: the second background spawn queues behind the first
-    manager = new AgentManager(undefined, 1);
+    const completed: AgentRecord[] = [];
+    manager = new AgentManager((record) => completed.push(record), 1);
     vi.mocked(runAgent).mockImplementation(() => new Promise(() => {}));
 
     manager.spawn(mockPi, mockCtx, "X", "blocker", { description: "block", isBackground: true });
@@ -551,15 +552,19 @@ describe("AgentManager — abort() state machine", () => {
     expect(manager.abort(queuedId)).toBe(true);
     expect(queuedRecord.status).toBe("stopped");
     expect(queuedRecord.completedAt).toBeGreaterThan(0);
+    expect(completed.map(r => r.id)).toEqual([queuedId]);
     // Aborting again is a no-op — status is no longer "queued" or "running"
     expect(manager.abort(queuedId)).toBe(false);
+    expect(completed.map(r => r.id)).toEqual([queuedId]);
   });
 
-  it("aborts a running agent by firing its AbortController and setting status='stopped'", () => {
-    manager = new AgentManager();
-    let receivedSignal: AbortSignal | undefined;
+  it("aborts a running background agent, emits completion, and unblocks the queue without waiting for settlement", () => {
+    const completed: AgentRecord[] = [];
+    manager = new AgentManager((record) => completed.push(record), 1);
+    const receivedSignals: AbortSignal[] = [];
     vi.mocked(runAgent).mockImplementation((_ctx, _type, _prompt, opts) => {
-      receivedSignal = (opts as { signal?: AbortSignal })?.signal;
+      const signal = (opts as { signal?: AbortSignal })?.signal;
+      if (signal) receivedSignals.push(signal);
       return new Promise(() => {});
     });
 
@@ -567,14 +572,21 @@ describe("AgentManager — abort() state machine", () => {
       description: "r",
       isBackground: true,
     });
+    const queuedId = manager.spawn(mockPi, mockCtx, "Y", "queued", {
+      description: "q",
+      isBackground: true,
+    });
     const record = manager.getRecord(id)!;
     expect(record.status).toBe("running");
-    expect(receivedSignal?.aborted).toBe(false);
+    expect(manager.getRecord(queuedId)!.status).toBe("queued");
+    expect(receivedSignals[0]?.aborted).toBe(false);
 
     expect(manager.abort(id)).toBe(true);
     expect(record.status).toBe("stopped");
     expect(record.completedAt).toBeGreaterThan(0);
-    expect(receivedSignal?.aborted).toBe(true);
+    expect(receivedSignals[0]?.aborted).toBe(true);
+    expect(completed.map(r => r.id)).toEqual([id]);
+    expect(manager.getRecord(queuedId)!.status).toBe("running");
   });
 
   it("returns false (and does not change status) for an already-completed agent", async () => {
@@ -614,6 +626,24 @@ describe("AgentManager — abort() state machine", () => {
 
     expect(record.status).toBe("stopped");        // not overwritten to "completed"
     expect(record.result).toBe("partial output"); // partial result still captured
+  });
+
+  it("does not emit completion twice when an aborted running background agent eventually settles", async () => {
+    const completed: AgentRecord[] = [];
+    manager = new AgentManager((record) => completed.push(record));
+    let resolveRun!: (v: unknown) => void;
+    vi.mocked(runAgent).mockImplementation(() => new Promise((res) => { resolveRun = res as (v: unknown) => void; }));
+
+    const id = manager.spawn(mockPi, mockCtx, "X", "p", { description: "r", isBackground: true });
+    const record = manager.getRecord(id)!;
+
+    expect(manager.abort(id)).toBe(true);
+    expect(completed.map(r => r.id)).toEqual([id]);
+
+    resolveRun({ responseText: "partial output", session: mockSession(), aborted: false, steered: false });
+    await record.promise;
+
+    expect(completed.map(r => r.id)).toEqual([id]);
   });
 });
 
@@ -692,6 +722,27 @@ describe("AgentManager — abortAll", () => {
   it("returns 0 when there are no running or queued agents", () => {
     manager = new AgentManager();
     expect(manager.abortAll()).toBe(0);
+  });
+
+  it("does not emit background completion later when an abortAll-stopped agent settles", async () => {
+    const completed: AgentRecord[] = [];
+    manager = new AgentManager((record) => completed.push(record));
+    let resolveRun!: (v: unknown) => void;
+    vi.mocked(runAgent).mockImplementation(() => new Promise((res) => { resolveRun = res as (v: unknown) => void; }));
+
+    const id = manager.spawn(mockPi, mockCtx, "X", "r", {
+      description: "r",
+      isBackground: true,
+    });
+
+    expect(manager.abortAll()).toBe(1);
+    expect(manager.getRecord(id)?.status).toBe("stopped");
+    expect(completed).toEqual([]);
+
+    resolveRun({ responseText: "partial", session: mockSession(), aborted: false, steered: false });
+    await manager.getRecord(id)?.promise;
+
+    expect(completed).toEqual([]);
   });
 });
 
