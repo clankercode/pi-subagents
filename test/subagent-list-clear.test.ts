@@ -78,6 +78,44 @@ describe("list_subagents selection", () => {
     expect(details.visible.map((a) => a.id)).toEqual(["done-new", "done-old"]);
     expect(details.hiddenDoneCount).toBe(0);
   });
+
+  it("returns clone-safe renderer details without live AgentRecord internals", () => {
+    const details = buildListSubagentsDetails([
+      record({
+        id: "run-with-internals",
+        status: "running",
+        description: "running work",
+        promise: Promise.resolve("done"),
+        abortController: new AbortController(),
+        outputCleanup: () => {},
+        session: { dispose: vi.fn() } as any,
+      }),
+    ], { now: 12_000 });
+
+    expect(() => structuredClone(details)).not.toThrow();
+    expect(details.visible[0]).toEqual({
+      id: "run-with-internals",
+      type: "general-purpose",
+      status: "running",
+      description: "running work",
+      startedAt: 1_000,
+    });
+  });
+
+  it("snapshots agent row status when details are built", () => {
+    const source = record({ id: "run", status: "running", startedAt: 10_000, description: "running work" });
+    const details = buildListSubagentsDetails([source], { now: 12_000 });
+
+    source.status = "completed";
+    source.completedAt = 12_000;
+
+    expect(details.activeCount).toBe(1);
+    expect(details.visible[0]?.status).toBe("running");
+    const lines = renderLines(renderListSubagentsDetails(details, theme));
+    expect(lines[0]).toContain("1 active");
+    expect(lines[1]).toContain("running");
+    expect(lines[1]).not.toContain("done");
+  });
 });
 
 describe("clear_subagents selection", () => {

@@ -25,10 +25,19 @@ export interface ListSubagentsOptions {
   recentSuccessLimit?: number;
 }
 
+export interface ListSubagentsAgentDetails {
+  id: string;
+  type: AgentRecord["type"];
+  description: string;
+  status: AgentRecord["status"];
+  startedAt: number;
+  completedAt?: number;
+}
+
 export interface ListSubagentsDetails {
   total: number;
   all: boolean;
-  visible: AgentRecord[];
+  visible: ListSubagentsAgentDetails[];
   hiddenDoneCount: number;
   activeCount: number;
   problemCount: number;
@@ -91,7 +100,19 @@ function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
-function formatAge(record: AgentRecord, now: number): string {
+function toListSubagentsAgentDetails(record: AgentRecord): ListSubagentsAgentDetails {
+  const details: ListSubagentsAgentDetails = {
+    id: record.id,
+    type: record.type,
+    description: record.description,
+    status: record.status,
+    startedAt: record.startedAt,
+  };
+  if (record.completedAt !== undefined) details.completedAt = record.completedAt;
+  return details;
+}
+
+function formatAge(record: ListSubagentsAgentDetails, now: number): string {
   const start = record.completedAt ?? record.startedAt;
   const elapsed = Math.max(0, now - start);
   if (elapsed < 1_000) return "0s";
@@ -177,7 +198,7 @@ export function buildListSubagentsDetails(records: AgentRecord[], options: ListS
   return {
     total: records.length,
     all,
-    visible,
+    visible: visible.map(toListSubagentsAgentDetails),
     hiddenDoneCount: all ? 0 : Math.max(0, successes.length - recentSuccesses.length),
     activeCount: active.length,
     problemCount: problems.length,
@@ -230,7 +251,7 @@ export function buildClearSubagentsDetails(result: ClearSelectionResult): ClearS
   return { ...result, clearedCount: result.clearIds.length };
 }
 
-function renderAgentLine(record: AgentRecord, theme: RenderTheme, now: number): string {
+function renderAgentLine(record: ListSubagentsAgentDetails, theme: RenderTheme, now: number): string {
   const icon = theme.fg(statusColor(record.status), statusIcon(record.status));
   const id = theme.fg("muted", shortId(record.id));
   const type = theme.fg("text", pad(displayType(record.type), 8));
