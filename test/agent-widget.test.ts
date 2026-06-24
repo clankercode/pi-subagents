@@ -1,6 +1,6 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
-import { createActivityTracker } from "../src/index.js";
+import subagentsExtension, { createActivityTracker } from "../src/index.js";
 import { AgentWidget, describeActivityWithAge, formatMs, formatSessionTokens, formatSubagentStatusText } from "../src/ui/agent-widget.js";
 import { buildAgentTree, renderAgentTree, type WidgetAgentSnapshot } from "../src/ui/agent-widget-tree.js";
 
@@ -81,6 +81,52 @@ describe("agent widget tree rendering", () => {
 });
 
 describe("AgentWidget recursive rendering", () => {
+  it("wires created lifecycle events into descendant widget snapshots", async () => {
+    const extensionHandlers = new Map<string, any>();
+    const sessionHandlers = new Map<string, any>();
+    const pi = {
+      registerMessageRenderer: vi.fn(),
+      registerTool: vi.fn(),
+      registerCommand: vi.fn(),
+      registerShortcut: vi.fn(),
+      on: vi.fn((event: string, handler: any) => {
+        sessionHandlers.set(event, handler);
+        return vi.fn();
+      }),
+      events: {
+        emit: vi.fn(),
+        on: vi.fn((event: string, handler: any) => {
+          extensionHandlers.set(event, handler);
+          return vi.fn();
+        }),
+      },
+      appendEntry: vi.fn(),
+      sendMessage: vi.fn(),
+    } as any;
+    subagentsExtension(pi);
+
+    const ui = { setStatus: vi.fn(), setWidget: vi.fn() } as any;
+    await sessionHandlers.get("tool_execution_start")?.({}, { ui });
+
+    const created = extensionHandlers.get("subagents:created");
+    expect(created).toBeDefined();
+    created({
+      id: "child",
+      type: "general-purpose",
+      description: "nested sleeper",
+      depth: 2,
+      parentAgentId: "parent",
+      startedAt: 10,
+    });
+
+    const factory = ui.setWidget.mock.calls.at(-1)?.[1];
+    expect(factory).toBeDefined();
+    const component = factory({ terminal: { columns: 120 }, requestRender: vi.fn() }, plainTheme);
+    const text = component.render(120).join("\n");
+    expect(text).toContain("nested sleeper");
+    expect(text).toContain("depth 2/4");
+  });
+
   it("ages completed descendant snapshots out after their linger window", () => {
     const manager = { listAgents: () => [] } as any;
     const ui = { setStatus: vi.fn(), setWidget: vi.fn() } as any;

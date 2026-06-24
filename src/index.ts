@@ -472,6 +472,7 @@ export default function (pi: ExtensionAPI) {
     unsubSpawnRpc();
     unsubStopRpc();
     unsubPingRpc();
+    unsubWidgetCreated?.();
     unsubWidgetStarted?.();
     unsubWidgetCompleted?.();
     unsubWidgetFailed?.();
@@ -491,6 +492,7 @@ export default function (pi: ExtensionAPI) {
     const snapshot = widgetSnapshotFromEvent(payload);
     if (snapshot) widget.upsertSnapshot(snapshot);
   };
+  const unsubWidgetCreated = pi.events.on("subagents:created", upsertWidgetEventSnapshot);
   const unsubWidgetStarted = pi.events.on("subagents:started", upsertWidgetEventSnapshot);
   const unsubWidgetCompleted = pi.events.on("subagents:completed", upsertWidgetEventSnapshot);
   const unsubWidgetFailed = pi.events.on("subagents:failed", upsertWidgetEventSnapshot);
