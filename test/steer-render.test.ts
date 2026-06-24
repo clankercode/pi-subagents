@@ -219,18 +219,16 @@ describe("Agent renderCall", () => {
     expect(text).toContain("Agent");
   });
 
-  it("surfaces a model pinned in the agent's frontmatter config", () => {
+  it("does not show a model badge for unpinned Explore", () => {
     const { pi, tools } = makePi();
     subagentsExtension(pi);
-    // The Explore default agent pins claude-haiku-4-5 in its frontmatter —
-    // no per-call `model` arg needed, renderCall should still surface it.
     const rendered = tools.get("Agent").renderCall(
       { subagent_type: "Explore", description: "scan repo" },
       theme,
     );
     const text = rendered.render(200).join("\n");
-    expect(text).toContain("claude-haiku-4-5");
     expect(text).toContain("Explore");
+    expect(text).not.toContain("claude-haiku-4-5");
   });
 
   it("joins multiple call-time badges with a separator and keeps order stable", () => {

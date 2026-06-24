@@ -518,6 +518,19 @@ export class AgentManager {
     this.agents.delete(id);
   }
 
+  /** Remove selected terminal records. Running and queued records are never removed. */
+  clearRecords(ids: string[]): string[] {
+    const removed: string[] = [];
+    for (const id of ids) {
+      const record = this.agents.get(id);
+      if (!record) continue;
+      if (record.status === "running" || record.status === "queued") continue;
+      this.removeRecord(id, record);
+      removed.push(id);
+    }
+    return removed;
+  }
+
   private cleanup() {
     const cutoff = Date.now() - 10 * 60_000;
     for (const [id, record] of this.agents) {

@@ -36,6 +36,8 @@ export const SUBAGENT_TOOL_NAMES = {
   AGENT: "Agent",
   GET_RESULT: "get_subagent_result",
   STEER: "steer_subagent",
+  LIST_SUBAGENTS: "list_subagents",
+  CLEAR_SUBAGENTS: "clear_subagents",
   LIST_MODELS: "list_models",
 } as const;
 

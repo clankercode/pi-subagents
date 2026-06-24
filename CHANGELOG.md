@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`list_subagents` and `clear_subagents` tools** — agents can inspect retained subagent records with a compact `List Agents` renderer and clear stale completed records with a compact `Clear Agents` renderer. `list_subagents` defaults to active/problem agents plus the two most recent successful completions and reports hidden done counts; `all: true` shows the full retained list. `clear_subagents` defaults to successful completions older than 5 minutes, accepts explicit IDs/prefixes, and refuses to clear running or queued agents.
+
+### Changed
+- **`Agent` defaults omitted `subagent_type` to `general-purpose`** — callers can omit the type for the default general-purpose agent instead of receiving a missing-argument error.
+- **Built-in `Explore` no longer pins Haiku** — the default Explore agent now inherits the parent/session model unless the caller or a custom agent definition supplies a model.
+
 ## [0.10.8] - 2026-06-23
 
 ### Changed

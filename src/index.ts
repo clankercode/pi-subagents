@@ -37,11 +37,11 @@ import { SubagentScheduler } from "./schedule.js";
 import { resolveStorePath, ScheduleStore } from "./schedule-store.js";
 import { applyAndEmitLoaded, DEFAULT_WAIT_TIMEOUT_SECONDS, type SubagentsSettings, saveAndEmitChanged, type ToolDescriptionMode } from "./settings.js";
 import { getStatusNote } from "./status-note.js";
+import { registerSubagentListClearTools } from "./subagent-list-clear.js";
 import { type AgentConfig, type AgentInvocation, type AgentRecord, type JoinMode, MAX_RECURSIVE_DEPTH, type NotificationDetails, type SubagentType } from "./types.js";
 import { renderAgentCall, renderAgentResult, renderSteerCall, tailPreview } from "./ui/agent-tool-rendering.js";
 import {
   type AgentActivity,
-  type AgentDetails,
   AgentWidget,
   buildInvocationTags,
   describeActivity,
@@ -60,7 +60,7 @@ import { formatWaitTimeout, pollPendingMessages, raceWait, type WaitOutcome, wai
 // ---- Shared helpers ----
 
 /** Tool execute return value for a text response. */
-function textResult(msg: string, details?: AgentDetails) {
+function textResult(msg: string, details?: unknown) {
   return { content: [{ type: "text" as const, text: msg }], details: details as any };
 }
 
@@ -679,7 +679,7 @@ export default function (pi: ExtensionAPI) {
       }),
       subagent_type: Type.Optional(
         Type.String({
-          description: `The type of specialized agent to use. Available types: ${getAvailableTypes().join(", ")}. Custom agents from .pi/agents/*.md (project) or ${getAgentDir()}/agents/*.md (global) are also available. OMIT when retrying (preserved by the handle) unless you want to override it.`,
+          description: `The type of specialized agent to use. Defaults to general-purpose when omitted. Available types: ${getAvailableTypes().join(", ")}. Custom agents from .pi/agents/*.md (project) or ${getAgentDir()}/agents/*.md (global) are also available. OMIT when retrying (preserved by the handle) unless you want to override it.`,
         }),
       ),
       model: Type.Optional(
@@ -782,18 +782,16 @@ export default function (pi: ExtensionAPI) {
         const { retry: _omit, ...overrides } = params;
         P = { ...stashed.params, ...overrides } as typeof params;
       }
-      emitPromptPreview(P.prompt, P.description, P.subagent_type);
+      const requestedSubagentType = (P.subagent_type ?? "general-purpose") as SubagentType;
+      emitPromptPreview(P.prompt, P.description, requestedSubagentType);
 
-      // Retry supplied the prompt/type from the stash; otherwise both are required.
-      if (!retryHandle && (!P.prompt || !P.subagent_type)) {
-        return textResult(
-          `Missing required argument${!P.prompt && !P.subagent_type ? "s" : ""}: ` +
-          [!P.prompt && "prompt", !P.subagent_type && "subagent_type"].filter(Boolean).join(", ") +
-          ".",
-        );
+      // Retry supplied the prompt from the stash; otherwise prompt is required.
+      // subagent_type defaults to general-purpose when omitted.
+      if (!retryHandle && !P.prompt) {
+        return textResult("Missing required argument: prompt.");
       }
 
-      const rawType = P.subagent_type as SubagentType;
+      const rawType = requestedSubagentType;
       const resolved = resolveType(rawType);
       if (!resolved) {
         // Unknown agent type — recoverable. List valid types so the orchestrator
@@ -1227,6 +1225,10 @@ export default function (pi: ExtensionAPI) {
       }
     },
   }));
+
+  // ---- list_subagents / clear_subagents tools ----
+
+  registerSubagentListClearTools(pi, manager);
 
   // ---- list_models tool ----
 

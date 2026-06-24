@@ -32,6 +32,7 @@ Upstream changes are reviewed for cherry-picking when practical; otherwise they 
 - **Conversation viewer** — select any agent in `/agents` to open a live-scrolling overlay of its full conversation (auto-follows new content, scroll up to pause). Stop a still-running agent from here by pressing `x` (then `x` again to confirm) — works for background agents too
 - **Custom agent types** — define agents in `.pi/agents/<name>.md` with YAML frontmatter: custom system prompts, model selection, thinking levels, tool restrictions
 - **Mid-run steering** — inject messages into running agents to redirect their work without restarting
+- **Agent record maintenance** — `list_subagents` gives the LLM a compact retained-agent summary (active, problem, recent done, hidden done count) and `clear_subagents` clears old completed records without touching active agents
 - **Session resume** — pick up where an agent left off, preserving full conversation context
 - **Graceful turn limits** — agents get a "wrap up" warning before hard abort, producing clean partial results instead of cut-off output
 - **Case-insensitive agent types** — `"explore"`, `"Explore"`, `"EXPLORE"` all work. Unknown types fall back to general-purpose with a note
@@ -270,7 +271,7 @@ Launch a sub-agent.
 |-----------|------|----------|-------------|
 | `prompt` | string | yes | The task for the agent |
 | `description` | string | yes | Short 3-5 word summary (shown in UI) |
-| `subagent_type` | string | yes | Agent type (built-in or custom) |
+| `subagent_type` | string | no | Agent type (built-in or custom). Defaults to `general-purpose` |
 | `model` | string | no | Model — `provider/modelId` or fuzzy name (`"haiku"`, `"sonnet"`) |
 | `thinking` | string | no | Thinking level: off, minimal, low, medium, high, xhigh |
 | `max_turns` | number | no | Max agentic turns. Omit for unlimited (default) |
@@ -300,6 +301,24 @@ Send a steering message to a running agent. The message interrupts after the cur
 |-----------|------|----------|-------------|
 | `agent_id` | string | yes | Agent ID to steer |
 | `message` | string | yes | Message to inject into agent conversation |
+
+### `list_subagents`
+
+List retained subagent records with a compact custom renderer. By default it shows queued/running agents, failed/stopped/aborted agents, and the two most recent successful agents that have not been cleaned up yet. It also reports how many successful completed agents are hidden. Pass `all: true` for the full retained list.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `all` | boolean | no | Show every retained subagent instead of the default compact subset |
+
+### `clear_subagents`
+
+Clear retained terminal subagent records with a compact custom renderer. By default it clears successful completed/steered agents older than 5 minutes. You can provide explicit IDs or unique prefixes to clear specific terminal agents. Running and queued agents are never cleared; attempts to clear them are reported as errors.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `agent_ids` | string[] | no | Exact IDs or unique prefixes to clear; ignores the age threshold |
+| `older_than_minutes` | number | no | Default-mode age threshold. Defaults to 5 |
+| `include_errors` | boolean | no | Also clear failed/stopped/aborted terminal records older than the threshold |
 
 ## Commands
 

@@ -186,6 +186,27 @@ describe("Agent retry handle (recoverable invocation)", () => {
     expect(String(passedType).toLowerCase()).toBe("explore");
   });
 
+  it("omitted subagent_type defaults to general-purpose", async () => {
+    vi.mocked(runAgent).mockResolvedValue({
+      responseText: "OK",
+      session: { dispose: vi.fn() } as any,
+      aborted: false,
+      steered: false,
+    });
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+
+    const res = await tools.get("Agent").execute(
+      "tc-default-type",
+      { prompt: "P", description: "d" } as any,
+      undefined, undefined, ctx(),
+    );
+
+    expect(textOf(res)).toMatch(/started in background|queued/i);
+    const passedType = vi.mocked(runAgent).mock.calls.at(-1)?.[1];
+    expect(passedType).toBe("general-purpose");
+  });
+
   it("unknown subagent_type is a recoverable error listing valid types", async () => {
     const { pi, tools } = makePi();
     subagentsExtension(pi);
