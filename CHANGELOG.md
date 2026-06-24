@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`Agent` defaults omitted `subagent_type` to `general-purpose`** — callers can omit the type for the default general-purpose agent instead of receiving a missing-argument error.
 - **Built-in `Explore` no longer pins Haiku** — the default Explore agent now inherits the parent/session model unless the caller or a custom agent definition supplies a model.
 
+### Fixed
+- **`get_subagent_result` peek now bounds embedded multiline output by rendered lines** — JSONL transcript entries whose text blocks contain newlines are split before `peek.lines`, `peek.after`, regex filtering, and character truncation are applied, preventing a small requested line count from returning huge multiline tool/file output records.
+
 ## [0.10.8] - 2026-06-23
 
 ### Changed

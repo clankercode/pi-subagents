@@ -4,6 +4,9 @@
  * mock runAgent so completion is deterministic, then drive the real
  * get_subagent_result tool handler.
  */
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../src/agent-runner.js", async () => {
@@ -13,6 +16,7 @@ vi.mock("../src/agent-runner.js", async () => {
 
 import { runAgent } from "../src/agent-runner.js";
 import subagentsExtension from "../src/index.js";
+import { peekAgentOutput } from "../src/peek.js";
 import { DEFAULT_WAIT_TIMEOUT_SECONDS } from "../src/settings.js";
 
 function makePi() {
@@ -271,6 +275,40 @@ describe("get_subagent_result peek", () => {
     // verbose path runs (no peek header), result body present.
     expect(textOf(res)).toContain("result body");
     expect(textOf(res)).not.toContain("last 2 lines");
+  });
+
+  it("bounds embedded multiline output-file records by rendered lines", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "peek-multiline-"));
+    try {
+      const outputFile = join(tmp, "agent.output");
+      writeFileSync(outputFile, JSON.stringify({
+        message: {
+          content: [{ type: "text", text: "line one\nline two\nline three\nline four" }],
+        },
+      }) + "\n");
+
+      const peek = peekAgentOutput({
+        id: "agent-1",
+        type: "general-purpose",
+        description: "d",
+        status: "running",
+        toolUses: 0,
+        startedAt: 1,
+        depth: 1,
+        outputFile,
+        lifetimeUsage: { input: 0, output: 0, cacheWrite: 0 },
+        compactionCount: 0,
+      } as any, { lines: 2 });
+
+      expect(peek?.totalLines).toBe(4);
+      expect(peek?.text).toContain("Showing 2 last 2 lines, of 4 total");
+      expect(peek?.text).toContain("[3] line three");
+      expect(peek?.text).toContain("[4] line four");
+      expect(peek?.text).not.toContain("line one");
+      expect(peek?.text).not.toContain("line two");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("caps an oversized peek after-range and gives a continuation hint", async () => {

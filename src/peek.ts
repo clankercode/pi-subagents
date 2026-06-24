@@ -112,6 +112,11 @@ function parseOutputFileLines(path: string): string[] {
     return [];
   }
   const out: string[] = [];
+  const pushRenderedLines = (text: string) => {
+    for (const renderedLine of text.trimEnd().split("\n")) {
+      if (renderedLine.trim()) out.push(renderedLine);
+    }
+  };
   for (const line of raw.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed) continue;
@@ -124,12 +129,12 @@ function parseOutputFileLines(path: string): string[] {
     const content = entry?.message?.content;
     if (!Array.isArray(content)) {
       // Some entries may carry a plain string content.
-      if (typeof content === "string" && content.trim()) out.push(content.trim());
+      if (typeof content === "string" && content.trim()) pushRenderedLines(content);
       continue;
     }
     for (const block of content) {
       if (block?.type === "text" && typeof block.text === "string" && block.text.trim()) {
-        out.push(block.text.trimEnd());
+        pushRenderedLines(block.text);
       }
     }
   }
