@@ -1,10 +1,14 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import subagentsExtension, { createActivityTracker } from "../src/index.js";
 import { AgentWidget, describeActivityWithAge, formatMs, formatSessionTokens, formatSubagentStatusText } from "../src/ui/agent-widget.js";
 import { buildAgentTree, renderAgentTree, type WidgetAgentSnapshot } from "../src/ui/agent-widget-tree.js";
 
 const plainTheme = { fg: (_c: string, s: string) => s, bold: (s: string) => s };
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 function snap(partial: Partial<WidgetAgentSnapshot> & { id: string }): WidgetAgentSnapshot {
   return {
@@ -127,7 +131,9 @@ describe("AgentWidget recursive rendering", () => {
     expect(text).toContain("depth 2/4");
   });
 
-  it("ages completed descendant snapshots out after their linger window", () => {
+  it("ages completed descendant snapshots out after their turn linger window", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
     const manager = { listAgents: () => [] } as any;
     const ui = { setStatus: vi.fn(), setWidget: vi.fn() } as any;
     const widget = new AgentWidget(manager, new Map());
@@ -137,7 +143,7 @@ describe("AgentWidget recursive rendering", () => {
       parentAgentId: "missing-parent",
       description: "done grandchild",
       status: "completed",
-      completedAt: 2,
+      completedAt: 1_000,
     }));
 
     widget.update();
@@ -147,6 +153,47 @@ describe("AgentWidget recursive rendering", () => {
 
     widget.onTurnStart();
     expect(ui.setWidget).toHaveBeenLastCalledWith("agents", undefined);
+  });
+
+  it("ages completed descendant snapshots out by wall clock while another agent keeps running", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const manager = { listAgents: () => [snap({ id: "parent", description: "parent running", status: "running", startedAt: 1_000 })] } as any;
+    const ui = { setStatus: vi.fn(), setWidget: vi.fn() } as any;
+    const widget = new AgentWidget(manager, new Map());
+    widget.setUICtx(ui);
+    widget.ensureTimer();
+    widget.upsertSnapshot(snap({
+      id: "done-child",
+      parentAgentId: "parent",
+      description: "done child",
+      status: "completed",
+      startedAt: 1,
+      completedAt: 1_000,
+    }));
+
+    const factory = ui.setWidget.mock.calls.at(-1)[1];
+    const component = factory({ terminal: { columns: 120 }, requestRender: vi.fn() }, plainTheme);
+    expect(component.render().join("\n")).toContain("done child");
+
+    vi.advanceTimersByTime(60_000);
+    expect(component.render().join("\n")).not.toContain("done child");
+  });
+
+  it("starts the widget timer for descendant snapshots so spinners keep animating", () => {
+    vi.useFakeTimers();
+    const manager = { listAgents: () => [] } as any;
+    const ui = { setStatus: vi.fn(), setWidget: vi.fn() } as any;
+    const widget = new AgentWidget(manager, new Map());
+    widget.setUICtx(ui);
+    widget.upsertSnapshot(snap({ id: "child", description: "child running", status: "running" }));
+
+    const factory = ui.setWidget.mock.calls.at(-1)[1];
+    const requestRender = vi.fn();
+    factory({ terminal: { columns: 120 }, requestRender }, plainTheme);
+
+    vi.advanceTimersByTime(80);
+    expect(requestRender).toHaveBeenCalled();
   });
 
   it("renders descendant snapshots that are not in the local manager", () => {

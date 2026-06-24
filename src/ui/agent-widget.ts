@@ -273,8 +273,14 @@ export class AgentWidget {
   private widgetInterval: ReturnType<typeof setInterval> | undefined;
   /** Tracks how many turns each finished agent has survived. Key: agent ID, Value: turns since finished. */
   private finishedTurnAge = new Map<string, number>();
+  /** Tracks wall-clock finish time so long-running turns cannot keep completed rows forever. */
+  private finishedAt = new Map<string, number>();
   /** How many extra turns errors/aborted agents linger (completed agents clear after 1 turn). */
   private static readonly ERROR_LINGER_TURNS = 2;
+  /** Max wall-clock linger for successful completions when no new parent turn starts. */
+  private static readonly COMPLETED_LINGER_MS = 30_000;
+  /** Max wall-clock linger for non-success outcomes when no new parent turn starts. */
+  private static readonly ERROR_LINGER_MS = 120_000;
 
   /** Whether the widget callback is currently registered with the TUI. */
   private widgetRegistered = false;
@@ -299,19 +305,26 @@ export class AgentWidget {
 
   upsertSnapshot(snapshot: WidgetAgentSnapshot) {
     this.descendantSnapshots.set(snapshot.id, snapshot);
-    if (snapshot.status !== "running" && snapshot.status !== "queued") {
-      this.markFinished(snapshot.id);
+    if (snapshot.status === "running" || snapshot.status === "queued") {
+      this.finishedTurnAge.delete(snapshot.id);
+      this.finishedAt.delete(snapshot.id);
+    } else {
+      this.markFinished(snapshot.id, snapshot.completedAt);
     }
     this.update();
   }
 
   removeSnapshot(id: string) {
     this.descendantSnapshots.delete(id);
+    this.finishedTurnAge.delete(id);
+    this.finishedAt.delete(id);
     this.update();
   }
 
   clearSnapshots() {
     this.descendantSnapshots.clear();
+    this.finishedTurnAge.clear();
+    this.finishedAt.clear();
     this.update();
   }
 
@@ -348,16 +361,24 @@ export class AgentWidget {
   }
 
   /** Check if a finished agent should still be shown in the widget. */
-  private shouldShowFinished(agentId: string, status: string): boolean {
+  private shouldShowFinished(agentId: string, status: string, completedAt?: number): boolean {
     const age = this.finishedTurnAge.get(agentId) ?? 0;
     const maxAge = ERROR_STATUSES.has(status) ? AgentWidget.ERROR_LINGER_TURNS : 1;
-    return age < maxAge;
+    if (age >= maxAge) return false;
+
+    const finishedAt = this.finishedAt.get(agentId) ?? completedAt;
+    if (finishedAt == null) return true;
+    const maxMs = ERROR_STATUSES.has(status) ? AgentWidget.ERROR_LINGER_MS : AgentWidget.COMPLETED_LINGER_MS;
+    return Date.now() - finishedAt < maxMs;
   }
 
   /** Record an agent as finished (call when agent completes). */
-  markFinished(agentId: string) {
+  markFinished(agentId: string, completedAt = Date.now()) {
     if (!this.finishedTurnAge.has(agentId)) {
       this.finishedTurnAge.set(agentId, 0);
+    }
+    if (!this.finishedAt.has(agentId)) {
+      this.finishedAt.set(agentId, completedAt);
     }
   }
 
@@ -383,13 +404,20 @@ export class AgentWidget {
     const merged = new Map(this.descendantSnapshots);
     const allAgents = this.manager.listAgents();
     for (const a of allAgents) {
-      if (a.status === "running" || a.status === "queued" || (a.completedAt && this.shouldShowFinished(a.id, a.status))) {
+      if (a.status === "running" || a.status === "queued") {
+        this.finishedTurnAge.delete(a.id);
+        this.finishedAt.delete(a.id);
+        merged.set(a.id, this.recordToSnapshot(a));
+      } else if (a.completedAt && this.shouldShowFinished(a.id, a.status, a.completedAt)) {
         merged.set(a.id, this.recordToSnapshot(a));
       }
     }
     for (const [id, snapshot] of merged) {
-      if (snapshot.status !== "running" && snapshot.status !== "queued" && snapshot.completedAt && !this.shouldShowFinished(id, snapshot.status)) {
+      if (snapshot.status !== "running" && snapshot.status !== "queued" && !this.shouldShowFinished(id, snapshot.status, snapshot.completedAt)) {
         merged.delete(id);
+        if (this.descendantSnapshots.has(id)) this.descendantSnapshots.delete(id);
+        this.finishedTurnAge.delete(id);
+        this.finishedAt.delete(id);
       }
     }
     return [...merged.values()];
@@ -425,7 +453,7 @@ export class AgentWidget {
     for (const a of snapshots) {
       if (a.status === "running") { runningCount++; }
       else if (a.status === "queued") { queuedCount++; }
-      else if (a.completedAt && this.shouldShowFinished(a.id, a.status)) { hasFinished = true; }
+      else if (this.shouldShowFinished(a.id, a.status, a.completedAt)) { hasFinished = true; }
     }
     const hasActive = runningCount > 0 || queuedCount > 0;
 
@@ -443,10 +471,15 @@ export class AgentWidget {
       if (this.widgetInterval) { clearInterval(this.widgetInterval); this.widgetInterval = undefined; }
       // Clean up stale entries
       for (const [id] of this.finishedTurnAge) {
-        if (!allAgents.some(a => a.id === id)) this.finishedTurnAge.delete(id);
+        if (!allAgents.some(a => a.id === id) && !this.descendantSnapshots.has(id)) {
+          this.finishedTurnAge.delete(id);
+          this.finishedAt.delete(id);
+        }
       }
       return;
     }
+
+    this.ensureTimer();
 
     // Status bar — only call setStatus when the text actually changes
     const statusWidth = this.tui?.terminal.columns ?? DEFAULT_STATUS_TEXT_WIDTH;
