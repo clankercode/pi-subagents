@@ -1,6 +1,7 @@
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { getConfig } from "../agent-types.js";
 import type { AgentInvocation, SubagentType } from "../types.js";
+import { getSessionTokens } from "../usage.js";
 import type { AgentActivity, Theme } from "./agent-widget.js";
 
 export type WidgetDisplayMode = "auto" | "rich" | "compact";
@@ -92,6 +93,13 @@ function formatElapsed(startedAt: number, now: number): string {
   return rest > 0 ? `${minutes}m ${rest}s` : `${minutes}m`;
 }
 
+/** Compact token count for widget rows: "12.3k tok", "1.2M tok". */
+function formatCompactTokens(count: number): string {
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M tok`;
+  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}k tok`;
+  return `${count} tok`;
+}
+
 function statusIcon(snapshot: WidgetAgentSnapshot, frame: string, theme: Theme): string {
   if (snapshot.status === "running") return theme.fg("accent", frame);
   if (snapshot.status === "queued") return theme.fg("muted", "◦");
@@ -124,6 +132,10 @@ function collectRows(
     if (s.activity?.turnCount) stats.push(`↻${s.activity.turnCount}`);
     if (s.toolUses > 0) stats.push(`${s.toolUses} tool${s.toolUses === 1 ? "" : "s"}`);
     stats.push(elapsed);
+    if (s.activity?.session) {
+      const tokens = getSessionTokens(s.activity.session);
+      if (tokens > 0) stats.push(formatCompactTokens(tokens));
+    }
     const orphan = node.orphaned ? " ⚠ orphan" : "";
     const error = s.error ? ` error: ${s.error}` : "";
     rows.push(`${prefix}${connector} ${statusIcon(s, options.frame, options.theme)} ${options.theme.bold(name)}  ${options.theme.fg("muted", s.description)} ${options.theme.fg("dim", `· ${stats.join(" · ")}${orphan}${error}`)}`);
