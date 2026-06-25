@@ -31,6 +31,8 @@ See the general guide at `~/.llm-general/npm-autopublish-via-ci.md` for other re
 
 ## Keeping Upstream In Sync
 
+**Do NOT pull in upstream changes without consulting Max first.** You may preview the changes and whether there will be any conflicts, and if so estimate how complex it will be to fix — but do not merge, rebase, or cherry-pick without explicit approval.
+
 Periodically run:
 
 ```bash
