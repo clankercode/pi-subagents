@@ -1,0 +1,57 @@
+# pi-subagents bugs
+
+## 2026-06-24: subagent-spawned reviewer c2c alias registrations route to coordinator
+
+Observed in `/home/xertrov/src/autoplanet-harness` session while coordinating nested pi Agent reviewers.
+
+Symptom:
+- Coordinator received transcript notifications like `Subagent <id> registered as pi-...` for reviewer subagents spawned by an implementer subagent.
+- The spawning implementer subagent did **not** receive those c2c alias registration notifications.
+- This made the coordinator see aliases for subagents it did not directly start, while the parent subagent could not map its Agent handles to c2c aliases.
+
+Concrete example:
+- Coordinator directly started T244/G9 implementer: agent `81a4688f-82ce-40e`, alias `pi-8391d3-ae5887a`.
+- T244 spawned reviewer/rereviewer Agent subagents with IDs:
+  - `436193fa-ef20-4d0`
+  - `97bddbcf-53a8-48c`
+  - `56a58df4-c91c-48a`
+  - `82ae1d14-707d-415`
+- Coordinator received registrations for aliases including `pi-8391d3-a723e9a`, `pi-8391d3-a0a8a00`, `pi-8391d3-ab7ed6f`, `pi-8391d3-ab167dc`.
+- T244 reported: its transcript only showed Agent result handles/output paths/completion summaries; it did not see `Subagent <id> registered as pi-...` messages and could not map reviewer IDs to c2c aliases.
+
+Expected behavior:
+- Alias registration notifications for a subagent spawned by another subagent should be delivered to the spawning subagent's transcript, or at least to both the spawning subagent and coordinator with parent/owner metadata.
+- The notification should include parent/spawner identity so coordinators can distinguish direct children from nested reviewer subagents.
+
+Impact:
+- Coordinator receives noisy/ambiguous registrations for unknown aliases.
+- Spawning subagent cannot c2c-message its own reviewers by alias or report alias ownership accurately.
+- Requires extra coordinator debugging messages to identify ownership.
+
+Suggested fix:
+- Route `Subagent <id> registered as <alias>` to the agent that invoked the Agent tool.
+- Add fields like `parent_agent_id`, `parent_alias`, and maybe `root_coordinator_alias` to registration notifications.
+- If root coordinator must also receive nested registrations, label them explicitly as nested.
+
+Additional observation after filing:
+- Coordinator later received another nested-looking registration: `Subagent 8262e0d6-457e-49c registered as pi-8391d3-ab41e8a`, again without the coordinator directly starting that subagent.
+- Confirmed with T245/G6 implementer `pi-8391d3-a861bf0`: it spawned reviewer Agent IDs `8262e0d6-457e-49c` and `14d29ca7-348e-437`, while coordinator received alias registrations `pi-8391d3-ab41e8a` and `pi-8391d3-aa90cd5`; T245 reported it had not received any c2c alias registration notifications for them.
+- After crash recovery restart, coordinator received another nested-looking registration: `Subagent 4f396572-cab5-42c registered as pi-8391d3-a52ab8a`; likely spawned by a recovery worker/reviewer rather than directly by coordinator.
+- Coordinator also received `Subagent 09dc9e7f-f960-411 registered as pi-8391d3-a219275` during recovery worker activity, again likely nested/reviewer notification routed to coordinator.
+- Coordinator also received `Subagent ee594feb-8fd1-458 registered as pi-8391d3-a8f6d40` while nested reviewer activity was ongoing; likely another nested alias notification routed to coordinator.
+- Coordinator also received `Subagent dd29fe5b-357a-48f registered as pi-8391d3-afd6cfc` during T246 nested rereview activity; likely another nested alias notification routed to coordinator.
+- Coordinator received nested-looking registrations `Subagent 9aa66b38-3ba8-405 registered as pi-8391d3-a6cefa4` and `Subagent d33bb514-be85-4a5 registered as pi-8391d3-ae99126` during active worker review activity.
+- Coordinator received nested-looking registration `Subagent ab7cb925-d76c-489 registered as pi-8391d3-a8c6afd` during active worker review activity.
+- Coordinator received nested-looking registration `Subagent ba23eaaf-a706-459 registered as pi-8391d3-af5d393` during active worker review activity.
+- Coordinator received nested-looking registration `Subagent adf52e5e-862e-4c6 registered as pi-8391d3-aa897ea` during active worker review activity.
+- Coordinator received nested-looking registration `Subagent e6eb1662-8223-458 registered as pi-8391d3-adb2231` during active worker review activity.
+- Coordinator received nested-looking registration `Subagent 565012aa-43b6-407 registered as pi-8391d3-a66be3e` during active worker review activity.
+- Coordinator received nested-looking registration `Subagent 603b211a-9daa-421 registered as pi-8391d3-aa92c43` during active worker review activity.
+- Coordinator received nested-looking registration `Subagent 734f3fa3-958b-4bd registered as pi-8391d3-a028432` during active T248 review activity.
+- Coordinator received nested-looking registration `Subagent 2d565584-fcbc-496 registered as pi-8391d3-ac6e43c` during active T250/T251/T252 review activity.
+- Coordinator received nested-looking registration `Subagent 5e7ee0d1-5112-4b9 registered as pi-8391d3-a7722c2` during active T250/T251/T252 review activity.
+- Coordinator received nested-looking registration `Subagent eae7393b-dfb4-445 registered as pi-8391d3-a2a9d62` during active T250/T251/T252 review activity.
+- Coordinator received nested-looking registration `Subagent 6629a0fe-daef-401 registered as pi-8391d3-ad0b4e5` during active T250 review activity.
+- Coordinator received nested-looking registration `Subagent 49eb5d11-178d-4d2 registered as pi-8391d3-a979978` during active T250 review activity.
+- Coordinator received nested-looking registration `Subagent bf846951-6b2f-4b5 registered as pi-8391d3-aabc2c5` during active T250 rereview activity.
+- Coordinator received nested-looking registration `Subagent 3250e286-4fd4-4a2 registered as pi-8391d3-a78b404` during active T250 rereview activity.

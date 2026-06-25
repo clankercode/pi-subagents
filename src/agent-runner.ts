@@ -71,7 +71,12 @@ function getLoadingExtensionAgentId(): string | undefined {
   return value && typeof value.agentId === "string" ? value.agentId : undefined;
 }
 
-async function withLoadingExtensionDepth<T>(depth: number, agentId: string | undefined, fn: () => Promise<T>): Promise<T> {
+function getLoadingExtensionParentAgentId(): string | undefined {
+  const value = (globalThis as any)[EXTENSION_DEPTH_KEY];
+  return value && typeof value.parentAgentId === "string" ? value.parentAgentId : undefined;
+}
+
+async function withLoadingExtensionDepth<T>(depth: number, agentId: string | undefined, parentAgentId: string | undefined, fn: () => Promise<T>): Promise<T> {
   const previous = extensionDepthLoadChain;
   let release!: () => void;
   extensionDepthLoadChain = new Promise<void>((resolve) => {
@@ -82,7 +87,7 @@ async function withLoadingExtensionDepth<T>(depth: number, agentId: string | und
   try {
     const g = globalThis as any;
     const prev = g[EXTENSION_DEPTH_KEY];
-    g[EXTENSION_DEPTH_KEY] = { depth, agentId };
+    g[EXTENSION_DEPTH_KEY] = { depth, agentId, parentAgentId };
     try {
       return await fn();
     } finally {
@@ -100,6 +105,10 @@ export function getCurrentExtensionDepth(): number {
 
 export function getCurrentExtensionAgentId(): string | undefined {
   return getLoadingExtensionAgentId();
+}
+
+export function getCurrentExtensionParentAgentId(): string | undefined {
+  return getLoadingExtensionParentAgentId();
 }
 
 /**
@@ -559,7 +568,7 @@ export async function runAgent(
     systemPromptOverride: () => systemPrompt,
     appendSystemPromptOverride: () => [],
   });
-  await withLoadingExtensionDepth(depth, options.agentId, () => loader.reload());
+  await withLoadingExtensionDepth(depth, options.agentId, options.parentAgentId, () => loader.reload());
 
   // Plain entries in `tools:` are expected to be built-in names (extension tools
   // go through `ext:`), so an unknown name there is unambiguously a typo. Previously
