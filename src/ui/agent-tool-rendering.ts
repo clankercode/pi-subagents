@@ -23,7 +23,7 @@ export function snipMiddleLines(text: string, edgeLines = 20): string[] {
   const omitted = lines.length - maxLines;
   return [
     ...lines.slice(0, edgeLines),
-    `... ${omitted} lines omitted; expand for full output ...`,
+    `─────── ⋐ ${omitted.toLocaleString()} lines hidden from preview ⋑ ───────`,
     ...lines.slice(-edgeLines),
   ];
 }
