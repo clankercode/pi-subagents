@@ -121,7 +121,7 @@ describe("Agent result renderResult", () => {
     const text = rendered.render(200).join("\n");
     expect(text).toContain("line 1");
     expect(text).toContain("line 20");
-    expect(text).toContain("... 10 lines omitted; expand for full output ...");
+    expect(text).toContain("─────── ⋐ 10 lines hidden from preview ⋑ ───────");
     expect(text).toContain("line 31");
     expect(text).toContain("line 50");
     expect(text).not.toContain("line 21");
@@ -284,5 +284,115 @@ describe("Agent renderCall", () => {
     const text = rendered.render(200).join("\n");
     expect(text).toContain("…");
     expect(text).not.toContain(longSchedule);
+  });
+});
+
+describe("get_subagent_result renderResult", () => {
+  it("snips long collapsed output to first and last 20 lines with divider", () => {
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+    const resultText = Array.from({ length: 60 }, (_, i) => `line ${i + 1}`).join("\n");
+
+    const rendered = tools.get("get_subagent_result").renderResult(
+      {
+        content: [{ type: "text", text: `Agent: test-1\nType: Agent | Status: completed | Tool uses: 5 | Duration: 10s\nDescription: test task\n\n${resultText}` }],
+        details: {
+          status: "completed",
+          description: "test task",
+          toolUses: 5,
+          tokens: "1.2k tokens",
+          contextPercent: 42,
+          duration: "10s",
+        },
+      },
+      { expanded: false, isPartial: false },
+      theme,
+    );
+
+    const text = rendered.render(200).join("\n");
+    // Header info present
+    expect(text).toContain("test task");
+    expect(text).toContain("completed");
+    expect(text).toContain("5 tool uses");
+    // First 20 lines present
+    expect(text).toContain("line 1");
+    expect(text).toContain("line 20");
+    // Divider present
+    expect(text).toContain("─────── ⋐ 20 lines hidden from preview ⋑ ───────");
+    // Last 20 lines present
+    expect(text).toContain("line 41");
+    expect(text).toContain("line 60");
+    // Middle lines NOT present
+    expect(text).not.toContain("line 21");
+    expect(text).not.toContain("line 40");
+  });
+
+  it("shows the full output when expanded", () => {
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+    const resultText = Array.from({ length: 60 }, (_, i) => `line ${i + 1}`).join("\n");
+
+    const rendered = tools.get("get_subagent_result").renderResult(
+      {
+        content: [{ type: "text", text: `Agent: test-1\n\n${resultText}` }],
+        details: {
+          status: "completed",
+          description: "test task",
+          toolUses: 0,
+          tokens: null,
+          contextPercent: null,
+          duration: "5s",
+        },
+      },
+      { expanded: true, isPartial: false },
+      theme,
+    );
+
+    const text = rendered.render(200).join("\n");
+    expect(text).toContain("line 21");
+    expect(text).toContain("line 40");
+    expect(text).not.toContain("lines hidden");
+  });
+
+  it("renders without details (no header)", () => {
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+
+    const rendered = tools.get("get_subagent_result").renderResult(
+      {
+        content: [{ type: "text", text: "Agent not found: \"abc\"" }],
+        details: undefined,
+      },
+      { expanded: false, isPartial: false },
+      theme,
+    );
+
+    const text = rendered.render(200).join("\n");
+    expect(text).toContain("Agent not found");
+  });
+
+  it("shows status icon for error agents", () => {
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+
+    const rendered = tools.get("get_subagent_result").renderResult(
+      {
+        content: [{ type: "text", text: "Agent: test-1\nStatus: error\n\nError: something went wrong" }],
+        details: {
+          status: "error",
+          description: "failing task",
+          toolUses: 2,
+          tokens: null,
+          contextPercent: null,
+          duration: "3s",
+        },
+      },
+      { expanded: false, isPartial: false },
+      theme,
+    );
+
+    const text = rendered.render(200).join("\n");
+    expect(text).toContain("failing task");
+    expect(text).toContain("error");
   });
 });

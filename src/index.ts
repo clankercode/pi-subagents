@@ -24,6 +24,7 @@ import { getAgentConversation, getCurrentExtensionAgentId, getCurrentExtensionDe
 import { buildAgentToolDescription, getModelLabelFromConfig } from "./agent-tool-description.js";
 import { BUILTIN_TOOL_NAMES, getAgentConfig, getAllTypes, getAvailableTypes, isDefaultsDisabled, registerAgents, resolveType, setDefaultsDisabled } from "./agent-types.js";
 import { formatOutputFileHint, limitText, MAX_RESULT_CHARS, MAX_VERBOSE_CHARS } from "./bounded-output.js";
+import { extractText } from "./context.js";
 import { registerRpcHandlers } from "./cross-extension-rpc.js";
 import { loadCustomAgents } from "./custom-agents.js";
 import { isModelInScope, readEnabledModels, resolveEnabledModels } from "./enabled-models.js";
@@ -39,7 +40,7 @@ import { applyAndEmitLoaded, DEFAULT_WAIT_TIMEOUT_SECONDS, type SubagentsSetting
 import { getStatusNote } from "./status-note.js";
 import { registerSubagentListClearTools } from "./subagent-list-clear.js";
 import { type AgentConfig, type AgentInvocation, type AgentRecord, type JoinMode, MAX_RECURSIVE_DEPTH, type NotificationDetails, type SubagentType } from "./types.js";
-import { renderAgentCall, renderAgentResult, renderSteerCall, tailPreview } from "./ui/agent-tool-rendering.js";
+import { renderAgentCall, renderAgentResult, renderSteerCall, snipMiddleLines, tailPreview } from "./ui/agent-tool-rendering.js";
 import {
   type AgentActivity,
   AgentWidget,
@@ -62,6 +63,17 @@ import { formatWaitTimeout, pollPendingMessages, raceWait, type WaitOutcome, wai
 /** Tool execute return value for a text response. */
 function textResult(msg: string, details?: unknown) {
   return { content: [{ type: "text" as const, text: msg }], details: details as any };
+}
+
+/** Metadata attached to get_subagent_result for compact UI rendering. */
+interface GetResultDetails {
+  status: string;
+  description: string;
+  toolUses: number;
+  tokens: string | null;
+  contextPercent: number | null;
+  duration: string;
+  outputFile?: string;
 }
 
 /**
@@ -1096,6 +1108,57 @@ export default function (pi: ExtensionAPI) {
         }),
       ),
     }),
+    renderResult(result, { expanded }, theme) {
+      const details = result.details as GetResultDetails | undefined;
+      const text = extractText(result.content);
+
+      // Header: status + stats + description
+      let line = "";
+      if (details) {
+        const icon = details.status === "error" || details.status === "stopped" || details.status === "aborted"
+          ? theme.fg("error", "✗")
+          : details.status === "running"
+            ? theme.fg("accent", "◌")
+            : theme.fg("success", "✓");
+
+        const parts: string[] = [];
+        if (details.toolUses > 0) parts.push(`${details.toolUses} tool use${details.toolUses === 1 ? "" : "s"}`);
+        if (details.tokens) parts.push(details.tokens);
+        if (details.contextPercent !== null) parts.push(`ctx ${Math.round(details.contextPercent)}%`);
+        if (details.duration) parts.push(details.duration);
+        const stats = parts.map(p => theme.fg("dim", p)).join(" " + theme.fg("dim", "·") + " ");
+
+        line = `${icon} ${theme.bold(details.description)} ${theme.fg("dim", details.status)}`;
+        if (stats) line += "\n  " + stats;
+      }
+
+      // Body: snip when collapsed, full when expanded
+      // Extract the body portion (after the first blank line) to keep the
+      // tool-output header always visible and only snip the actual result.
+      if (text.trim()) {
+        const firstBlank = text.indexOf("\n\n");
+        const body = firstBlank >= 0 ? text.slice(firstBlank + 2) : text;
+
+        if (expanded) {
+          for (const l of text.split("\n")) {
+            line += "\n" + theme.fg("dim", `  ${l}`);
+          }
+        } else {
+          // Show the tool-output header verbatim, then snip only the body
+          if (firstBlank >= 0) {
+            for (const l of text.slice(0, firstBlank).split("\n")) {
+              line += "\n" + theme.fg("dim", `  ${l}`);
+            }
+          }
+          for (const l of snipMiddleLines(body, 20)) {
+            line += "\n" + theme.fg("dim", `  ${l}`);
+          }
+        }
+      }
+
+      return new Text(line, 0, 0);
+    },
+
     execute: async (_toolCallId, params, signal, _onUpdate, ctx) => {
       const record = manager.getRecord(params.agent_id);
       if (!record) {
@@ -1144,6 +1207,16 @@ export default function (pi: ExtensionAPI) {
       if (record.compactionCount) statsParts.push(`Compactions: ${record.compactionCount}`);
       statsParts.push(`Duration: ${duration}`);
 
+      const details: GetResultDetails = {
+        status: record.status,
+        description: record.description,
+        toolUses: record.toolUses,
+        tokens: tokens || null,
+        contextPercent,
+        duration,
+        outputFile: record.outputFile,
+      };
+
       let output =
         `Agent: ${record.id}\n` +
         `Type: ${displayName} | Status: ${record.status}${getStatusNote(record.status)} | ${statsParts.join(" | ")}\n` +
@@ -1187,7 +1260,7 @@ export default function (pi: ExtensionAPI) {
         }
       }
 
-      return textResult(output);
+      return textResult(output, details);
     },
   }));
 
