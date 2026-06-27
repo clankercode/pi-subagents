@@ -27,6 +27,7 @@ import { formatOutputFileHint, limitText, MAX_RESULT_CHARS, MAX_VERBOSE_CHARS } 
 import { extractText } from "./context.js";
 import { registerRpcHandlers } from "./cross-extension-rpc.js";
 import { loadCustomAgents } from "./custom-agents.js";
+import { registerDashboardModules } from "./dashboard-ui.js";
 import { isModelInScope, readEnabledModels, resolveEnabledModels } from "./enabled-models.js";
 import { GroupJoinManager } from "./group-join.js";
 import { resolveAgentInvocationConfig, resolveJoinMode } from "./invocation-config.js";
@@ -1323,6 +1324,7 @@ export default function (pi: ExtensionAPI) {
   // ---- list_subagents / clear_subagents tools ----
 
   registerSubagentListClearTools(pi, manager);
+  registerDashboardModules(pi, manager);
 
   // ---- list_models tool ----
 

@@ -135,7 +135,7 @@ describe("agent widget tree rendering", () => {
 
 describe("AgentWidget recursive rendering", () => {
   function setupExtensionWidgetHarness() {
-    const extensionHandlers = new Map<string, any>();
+    const extensionHandlers = new Map<string, any[]>();
     const sessionHandlers = new Map<string, any>();
     const pi = {
       registerMessageRenderer: vi.fn(),
@@ -149,7 +149,8 @@ describe("AgentWidget recursive rendering", () => {
       events: {
         emit: vi.fn(),
         on: vi.fn((event: string, handler: any) => {
-          extensionHandlers.set(event, handler);
+          if (!extensionHandlers.has(event)) extensionHandlers.set(event, []);
+          extensionHandlers.get(event)!.push(handler);
           return vi.fn();
         }),
       },
@@ -166,7 +167,7 @@ describe("AgentWidget recursive rendering", () => {
     const ui = { setStatus: vi.fn(), setWidget: vi.fn() } as any;
     await sessionHandlers.get("tool_execution_start")?.({}, { ui });
 
-    const created = extensionHandlers.get("subagents:created");
+    const created = extensionHandlers.get("subagents:created")?.[0];
     expect(created).toBeDefined();
     created({
       id: "child",
@@ -190,7 +191,7 @@ describe("AgentWidget recursive rendering", () => {
     const ui = { setStatus: vi.fn(), setWidget: vi.fn() } as any;
     await sessionHandlers.get("tool_execution_start")?.({}, { ui });
 
-    extensionHandlers.get("subagents:created")?.({
+    extensionHandlers.get("subagents:created")?.[0]?.({
       id: "child",
       type: "general-purpose",
       description: "nested sleeper",
