@@ -187,8 +187,10 @@ describe("toolDescriptionMode", () => {
         );
       });
       const desc: string = tools.get("Agent").description;
-      expect(desc).toContain("Depth 2/4");
-      expect(desc).toContain("Current recursive depth: 2/4.");
+      // {{currentDepth}} now shows nextSubagentDepth (extensionDepth + 1)
+      // so depth=2 in globalThis → nextSubagentDepth=3 → displays "3/4"
+      expect(desc).toContain("Depth 3/4");
+      expect(desc).toContain("Current recursive depth: 3/4.");
     } finally {
       if (prev === undefined) delete g[EXTENSION_DEPTH_KEY];
       else g[EXTENSION_DEPTH_KEY] = prev;
@@ -226,7 +228,7 @@ describe("toolDescriptionMode", () => {
       subagentsExtension(second.pi);
       try {
         expect(customDesc).toBe(second.tools.get("Agent").description);
-        expect(customDesc).toContain("Current recursive depth: 2/4.");
+        expect(customDesc).toContain("Current recursive depth: 3/4.");
       } finally {
         await second.handlers.get("session_shutdown")?.({}, { hasUI: false, ui: {} } as any);
       }

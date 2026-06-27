@@ -683,7 +683,7 @@ export default function (pi: ExtensionAPI) {
 
   const agentToolDescription = buildAgentToolDescription({
     mode: getToolDescriptionMode(),
-    extensionDepth,
+    nextSubagentDepth,
     schedulingEnabled: isSchedulingEnabled(),
   });
 

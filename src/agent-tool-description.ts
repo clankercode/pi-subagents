@@ -44,7 +44,13 @@ const buildCompactTypeListText = () =>
 
 export interface AgentToolDescriptionOptions {
   mode: ToolDescriptionMode;
-  extensionDepth: number;
+  /**
+   * Depth at which the NEXT spawned subagent will run.
+   * This is `extensionDepth + 1` — the agent's own depth plus one.
+   * Displayed as "Current recursive depth" in the tool description so the
+   * LLM sees the depth of the agent it is about to create, not its own depth.
+   */
+  nextSubagentDepth: number;
   schedulingEnabled: boolean;
 }
 
@@ -56,7 +62,7 @@ export function buildScheduleGuideline(schedulingEnabled: boolean): string {
 
 export function buildAgentToolDescription(options: AgentToolDescriptionOptions): string {
   const scheduleGuideline = buildScheduleGuideline(options.schedulingEnabled);
-  const recursiveGuideline = `Recursive agents are allowed through depth ${MAX_RECURSIVE_DEPTH}. Current recursive depth: ${options.extensionDepth}/${MAX_RECURSIVE_DEPTH}.`;
+  const recursiveGuideline = `Recursive agents are allowed through depth ${MAX_RECURSIVE_DEPTH}. Current recursive depth: ${options.nextSubagentDepth}/${MAX_RECURSIVE_DEPTH}.`;
 
   const compactAgentToolDescription = `Launch an autonomous agent for complex, multi-step tasks. Agent types:
 ${buildCompactTypeListText()}
@@ -67,7 +73,7 @@ Notes:
 - description: 3-5 words (shown in UI). Prompts must be self-contained — the agent has not seen this conversation.
 - Parallel work: one message, multiple Agent calls; they all run in the background. You are notified when agents finish — never poll or sleep.
 - Background by default: when you have useful independent work, launch it and continue. Doing nothing while an agent runs is worse than letting background work proceed.
-- Recursive agents: current depth ${options.extensionDepth}/${MAX_RECURSIVE_DEPTH}; you may spawn subagents until depth ${MAX_RECURSIVE_DEPTH}.
+- Recursive agents: current depth ${options.nextSubagentDepth}/${MAX_RECURSIVE_DEPTH}; you may spawn subagents until depth ${MAX_RECURSIVE_DEPTH}.
 - The result is not shown to the user — summarize it for them. Verify an agent's claimed code changes before reporting work done.
 - resume continues a previous agent by ID; steer_subagent messages a running one.
 - list_models enumerates the model registry the \`model:\` param accepts — call it before picking a model explicitly.
@@ -125,7 +131,7 @@ Terse command-style prompts produce shallow, generic work.
       compactTypeList: buildCompactTypeListText,
       agentDir: getAgentDir,
       scheduleGuideline: () => scheduleGuideline,
-      currentDepth: () => String(options.extensionDepth),
+      currentDepth: () => String(options.nextSubagentDepth),
       maxDepth: () => String(MAX_RECURSIVE_DEPTH),
       recursiveGuideline: () => recursiveGuideline,
     };
