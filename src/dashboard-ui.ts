@@ -110,7 +110,16 @@ export function registerDashboardModules(pi: ExtensionAPI, manager: AgentManager
   }
 
   // ── 1. Module Discovery (ui:list-modules) ──────────────────────────
+  // Guard against duplicate pushes: the bridge may call refreshUiModules
+  // multiple times per probe cycle when multiple sessions each register
+  // their own ui:invalidate listener. Check if our modules are already
+  // present before pushing.
   pi.events.on("ui:list-modules", ((probe: ModuleProbe) => {
+    const alreadyContributed = probe.modules.some(
+      (m: any) => m.kind === "management-modal" && m.id === MODULE_ID,
+    );
+    if (alreadyContributed) return;
+
     const agents = manager.listAgents();
     const running = agents.filter(a => a.status === "running").length;
     const completed = agents.filter(a => a.status === "completed").length;
