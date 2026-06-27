@@ -7,16 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-06-28
+
 ### Added
+- **Dashboard UI module integration** — `pi-agent-dashboard` users can now see subagents in the dashboard. Three integration points: a footer-segment decorator showing running/completed agent counts, a `/subagents` management-modal command that opens a table view of all subagent history with row actions (view result, abort, steer), and round-trip event handlers wired through the `ui_management` protocol. Lifecycle events trigger automatic dashboard invalidation.
+- **Compact view for `get_subagent_result`** — when tool output is collapsed in the TUI, `get_subagent_result` now shows first 20 + last 20 lines of the result body with a styled divider (`─────── ⋐ N lines hidden from preview ⋑ ───────`). The full content is still passed through to the LLM. The divider format also applies to the `Agent` tool's collapsed view.
 - **`list_subagents` and `clear_subagents` tools** — agents can inspect retained subagent records with a compact `List Agents` renderer and clear stale completed records with a compact `Clear Agents` renderer. `list_subagents` defaults to active/problem agents plus the two most recent successful completions and reports hidden done counts; `all: true` shows the full retained list. `clear_subagents` defaults to successful completions older than 5 minutes, accepts explicit IDs/prefixes, and refuses to clear running or queued agents.
 
 ### Changed
 - **`Agent` defaults omitted `subagent_type` to `general-purpose`** — callers can omit the type for the default general-purpose agent instead of receiving a missing-argument error.
 - **Built-in `Explore` no longer pins Haiku** — the default Explore agent now inherits the parent/session model unless the caller or a custom agent definition supplies a model.
+- **`snipMiddleLines` divider updated** — the collapsed-output divider now uses a styled format with locale-aware line counts instead of plain text.
 
 ### Fixed
-- **Nested subagents now appear in the live widget as soon as they are created** — the widget listens to `subagents:created` lifecycle events in addition to started/completed/failed updates, and created events now include record status metadata so queued recursive agents do not render as running while waiting.
+- **Nested subagents now appear in the live widget as soon as they are created** — the widget listens to `subagents:created` lifecycle events in addition to started/completed/failed updates, and created events now include record metadata so queued recursive agents do not render as running while waiting.
 - **`get_subagent_result` peek now bounds embedded multiline output by rendered lines** — JSONL transcript entries whose text blocks contain newlines are split before `peek.lines`, `peek.after`, regex filtering, and character truncation are applied, preventing a small requested line count from returning huge multiline tool/file output records.
+- **`get_subagent_result` renderResult uses typed status** — `GetResultDetails.status` is now typed as `AgentRecord['status']` and correctly renders `queued` status with the accent spinner icon.
 
 ## [0.10.8] - 2026-06-23
 
