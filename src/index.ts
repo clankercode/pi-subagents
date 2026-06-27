@@ -67,7 +67,7 @@ function textResult(msg: string, details?: unknown) {
 
 /** Metadata attached to get_subagent_result for compact UI rendering. */
 interface GetResultDetails {
-  status: string;
+  status: AgentRecord["status"];
   description: string;
   toolUses: number;
   tokens: string | null;
@@ -1117,7 +1117,7 @@ export default function (pi: ExtensionAPI) {
       if (details) {
         const icon = details.status === "error" || details.status === "stopped" || details.status === "aborted"
           ? theme.fg("error", "✗")
-          : details.status === "running"
+          : details.status === "running" || details.status === "queued"
             ? theme.fg("accent", "◌")
             : theme.fg("success", "✓");
 

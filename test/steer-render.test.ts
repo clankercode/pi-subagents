@@ -288,10 +288,86 @@ describe("Agent renderCall", () => {
 });
 
 describe("get_subagent_result renderResult", () => {
-  it("snips long collapsed output to first and last 20 lines with divider", () => {
+  it("renders empty output with details header and status", () => {
     const { pi, tools } = makePi();
     subagentsExtension(pi);
-    const resultText = Array.from({ length: 60 }, (_, i) => `line ${i + 1}`).join("\n");
+
+    const rendered = tools.get("get_subagent_result").renderResult(
+      {
+        content: [],
+        details: {
+          status: "completed",
+          description: "empty task",
+          toolUses: 0,
+          tokens: null,
+          contextPercent: null,
+          duration: "1s",
+        },
+      },
+      { expanded: false, isPartial: false },
+      theme,
+    );
+
+    const text = rendered.render(200).join("\n");
+    expect(text).toContain("empty task");
+    expect(text).toContain("completed");
+  });
+
+  it("shows a single-line result body without divider", () => {
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+
+    const rendered = tools.get("get_subagent_result").renderResult(
+      {
+        content: [{ type: "text", text: "Agent: test-1\n\nonly line" }],
+        details: {
+          status: "completed",
+          description: "single line task",
+          toolUses: 0,
+          tokens: null,
+          contextPercent: null,
+          duration: "1s",
+        },
+      },
+      { expanded: false, isPartial: false },
+      theme,
+    );
+
+    const text = rendered.render(200).join("\n");
+    expect(text).toContain("only line");
+    expect(text).not.toContain("lines hidden from preview");
+  });
+
+  it("shows exactly 40 body lines without divider", () => {
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+    const resultText = Array.from({ length: 40 }, (_, i) => `line ${i + 1}`).join("\n");
+
+    const rendered = tools.get("get_subagent_result").renderResult(
+      {
+        content: [{ type: "text", text: `Agent: test-1\n\n${resultText}` }],
+        details: {
+          status: "completed",
+          description: "forty line task",
+          toolUses: 0,
+          tokens: null,
+          contextPercent: null,
+          duration: "1s",
+        },
+      },
+      { expanded: false, isPartial: false },
+      theme,
+    );
+
+    const text = rendered.render(200).join("\n");
+    expect(text).toContain("line 40");
+    expect(text).not.toContain("lines hidden from preview");
+  });
+
+  it("snips long collapsed output to first and last 20 lines with raw decimal divider", () => {
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+    const resultText = Array.from({ length: 1041 }, (_, i) => `line ${i + 1}`).join("\n");
 
     const rendered = tools.get("get_subagent_result").renderResult(
       {
@@ -317,14 +393,93 @@ describe("get_subagent_result renderResult", () => {
     // First 20 lines present
     expect(text).toContain("line 1");
     expect(text).toContain("line 20");
-    // Divider present
-    expect(text).toContain("─────── ⋐ 20 lines hidden from preview ⋑ ───────");
+    // Divider present with raw decimal omitted count
+    expect(text).toContain("─────── ⋐ 1001 lines hidden from preview ⋑ ───────");
     // Last 20 lines present
-    expect(text).toContain("line 41");
-    expect(text).toContain("line 60");
+    expect(text).toContain("line 1022");
+    expect(text).toContain("line 1041");
     // Middle lines NOT present
     expect(text).not.toContain("line 21");
-    expect(text).not.toContain("line 40");
+    expect(text).not.toContain("line 1021");
+  });
+
+  it("renders queued status as non-success", () => {
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+
+    const rendered = tools.get("get_subagent_result").renderResult(
+      {
+        content: [{ type: "text", text: "Agent: test-1\nStatus: queued\n\nQueued behind another agent." }],
+        details: {
+          status: "queued",
+          description: "queued task",
+          toolUses: 0,
+          tokens: null,
+          contextPercent: null,
+          duration: "0s",
+        },
+      },
+      { expanded: false, isPartial: false },
+      theme,
+    );
+
+    const text = rendered.render(200).join("\n");
+    expect(text).toContain("◌ queued task queued");
+    expect(text).not.toContain("✓ queued task queued");
+  });
+
+  it("renders running status as non-success with wait message", () => {
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+
+    const rendered = tools.get("get_subagent_result").renderResult(
+      {
+        content: [{ type: "text", text: "Agent: test-1\nStatus: running\n\nStill running after wait timeout." }],
+        details: {
+          status: "running",
+          description: "running task",
+          toolUses: 1,
+          tokens: null,
+          contextPercent: null,
+          duration: "2s",
+        },
+      },
+      { expanded: false, isPartial: false },
+      theme,
+    );
+
+    const text = rendered.render(200).join("\n");
+    expect(text).toContain("◌ running task running");
+    expect(text).not.toContain("✓ running task running");
+    expect(text).toContain("Still running after wait timeout.");
+  });
+
+  it("does not alter original content when collapsed rendering snips display", () => {
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+    const resultText = Array.from({ length: 60 }, (_, i) => `line ${i + 1}`).join("\n");
+    const result = {
+      content: [{ type: "text", text: `Agent: test-1\n\n${resultText}` }],
+      details: {
+        status: "completed",
+        description: "mutation check",
+        toolUses: 0,
+        tokens: null,
+        contextPercent: null,
+        duration: "1s",
+      },
+    };
+
+    const rendered = tools.get("get_subagent_result").renderResult(
+      result,
+      { expanded: false, isPartial: false },
+      theme,
+    );
+
+    const text = rendered.render(200).join("\n");
+    expect(text).toContain("─────── ⋐ 20 lines hidden from preview ⋑ ───────");
+    expect(result.content[0].text).toContain("line 21");
+    expect(result.content[0].text).toContain("line 40");
   });
 
   it("shows the full output when expanded", () => {
