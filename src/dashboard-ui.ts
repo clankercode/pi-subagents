@@ -206,23 +206,25 @@ export function registerDashboardModules(pi: ExtensionAPI, manager: AgentManager
     scheduleInvalidate();
   }) as any);
 
-  // View Result: emit the result as a toast so the dashboard shows it
+  // View Result: return the agent's result as table rows so the modal
+  // displays it. The bridge's synchronous fast path calls `_reply(items)`
+  // when `data.items` is populated by the handler — do NOT call
+  // `scheduleInvalidate()` here as the subsequent re-probe would
+  // overwrite the returned rows with the original table data.
   pi.events.on("subagents:ui:view-result", ((data: any) => {
-    const agentId = data.params?.id ?? data.id;
+    // Bridge spreads msg.params into data; row identity is at data.row.id.
+    const agentId = data.row?.id ?? data.id;
+    if (!agentId) return;
     const record = manager.getRecord(agentId);
-    if (!record) {
-      pi.events.emit("ui:invalidate", { id: MODULE_ID });
-      return;
-    }
+    if (!record) return;
 
     const resultText = record.result?.trim() || "No output yet.";
     const preview = resultText.length > 2000
       ? resultText.slice(0, 2000) + "\n…(truncated)"
       : resultText;
 
-    pi.events.emit("ui:invalidate", { id: MODULE_ID });
-
-    // Return result as items so it shows in a detail view
+    // Populate data.items — the bridge's synchronous fast path forwards
+    // this as a `ui_data_list` message back to the dashboard.
     data.items = [{
       id: record.id,
       type: getDisplayName(record.type),
@@ -233,25 +235,33 @@ export function registerDashboardModules(pi: ExtensionAPI, manager: AgentManager
     }];
   }) as any);
 
-  // Abort: signal the agent to stop
+  // Abort: stop the running agent via the manager's abort() method
+  // which properly cancels the AbortController and cleans up state.
   pi.events.on("subagents:ui:abort", ((data: any) => {
-    const agentId = data.params?.id ?? data.id;
-    const record = manager.getRecord(agentId);
-    if (record?.session) {
-      // Use the session's abort mechanism
-      try {
-        record.session.dispose?.();
-      } catch {
-        // Ignore disposal errors
-      }
-    }
+    const agentId = data.row?.id ?? data.id;
+    if (!agentId) return;
+    manager.abort(agentId);
     scheduleInvalidate();
   }) as any);
 
-  // Steer: for now just invalidate — full steer requires a prompt input
-  // which the management-modal form view could support in the future
-  pi.events.on("subagents:ui:steer", ((_data: any) => {
-    // TODO: Could open a form view for entering the steer message
+  // Steer: send a steering message to a running agent's session.
+  // The management-modal row action carries the row identity; we steer
+  // with a default "Continue" nudge. A future form view could accept
+  // custom text.
+  pi.events.on("subagents:ui:steer", ((data: any) => {
+    const agentId = data.row?.id ?? data.id;
+    if (!agentId) return;
+    const record = manager.getRecord(agentId);
+    if (!record) return;
+
+    if (record.status === "running" && record.session) {
+      // Session is live — steer immediately
+      record.session.steer("Continue").catch(() => {});
+    } else if (record.status === "queued") {
+      // Session not yet created — queue the steer for flush on start
+      if (!record.pendingSteers) record.pendingSteers = [];
+      record.pendingSteers.push("Continue");
+    }
     scheduleInvalidate();
   }) as any);
 

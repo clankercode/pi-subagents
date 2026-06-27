@@ -10,6 +10,11 @@ function makeManager(overrides?: { agents?: any[] }) {
   return {
     listAgents: vi.fn(() => agents),
     getRecord: vi.fn((id: string) => agents.find(a => a.id === id)),
+    abort: vi.fn((id: string) => {
+      const a = agents.find(a => a.id === id);
+      if (a) a.status = "stopped";
+      return !!a;
+    }),
   } as any;
 }
 
@@ -190,7 +195,8 @@ describe("subagents:ui:view-result handler", () => {
     const manager = makeManager({ agents: [sampleAgent] });
     registerDashboardModules(makePi(events), manager);
 
-    const data: any = { params: { id: "agent-1" } };
+    // Bridge spreads msg.params into data; withRowParams nests row.
+    const data: any = { row: { id: "agent-1" } };
     events.emit("subagents:ui:view-result", data);
 
     expect(data.items).toHaveLength(1);
@@ -202,7 +208,7 @@ describe("subagents:ui:view-result handler", () => {
     const events = makeEvents();
     registerDashboardModules(makePi(events), makeManager({ agents: [] }));
 
-    const data: any = { params: { id: "nonexistent" } };
+    const data: any = { row: { id: "nonexistent" } };
     // Should not throw
     events.emit("subagents:ui:view-result", data);
     expect(data.items).toBeUndefined();
@@ -213,7 +219,7 @@ describe("subagents:ui:view-result handler", () => {
     const longResult = { ...sampleAgent, result: "x".repeat(5000) };
     registerDashboardModules(makePi(events), makeManager({ agents: [longResult] }));
 
-    const data: any = { params: { id: "agent-1" } };
+    const data: any = { row: { id: "agent-1" } };
     events.emit("subagents:ui:view-result", data);
 
     expect(data.items[0].result.length).toBeLessThan(5000);
@@ -222,21 +228,21 @@ describe("subagents:ui:view-result handler", () => {
 });
 
 describe("subagents:ui:abort handler", () => {
-  it("calls session.dispose on running agents", () => {
+  it("calls manager.abort for running agents", () => {
     const events = makeEvents();
-    const dispose = vi.fn();
-    const runningAgent = { ...sampleAgent, id: "r1", status: "running", session: { dispose } };
+    const runningAgent = { ...sampleAgent, id: "r1", status: "running" };
     const manager = makeManager({ agents: [runningAgent] });
     registerDashboardModules(makePi(events), manager);
 
-    events.emit("subagents:ui:abort", { params: { id: "r1" } });
-    expect(dispose).toHaveBeenCalled();
+    events.emit("subagents:ui:abort", { row: { id: "r1" } });
+    expect(manager.abort).toHaveBeenCalledWith("r1");
   });
 
   it("handles missing agent gracefully", () => {
     const events = makeEvents();
-    registerDashboardModules(makePi(events), makeManager({ agents: [] }));
+    const manager = makeManager({ agents: [] });
+    registerDashboardModules(makePi(events), manager);
     // Should not throw
-    events.emit("subagents:ui:abort", { params: { id: "nonexistent" } });
+    events.emit("subagents:ui:abort", { row: { id: "nonexistent" } });
   });
 });
