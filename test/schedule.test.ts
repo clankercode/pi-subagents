@@ -294,6 +294,33 @@ describe("SubagentScheduler — fire path", () => {
     expect(optsArg.isBackground).toBe(true);
   });
 
+  it("fire passes the parent event bus to spawned agents", () => {
+    scheduler.addJob({
+      name: "every-1s", description: "x", schedule: "1s",
+      subagent_type: "general-purpose", prompt: "x",
+    });
+
+    vi.advanceTimersByTime(1_000);
+    expect(manager.spawn).toHaveBeenCalledTimes(1);
+    const optsArg = manager.spawn.mock.calls[0][4];
+    expect(optsArg.eventBus).toBe(pi.events);
+  });
+
+  it("fire passes recursive spawn defaults to spawned agents", () => {
+    scheduler.stop();
+    scheduler.start(pi, ctx, manager, store, { depth: 3, parentAgentId: "parent-agent" });
+    scheduler.addJob({
+      name: "every-1s", description: "x", schedule: "1s",
+      subagent_type: "general-purpose", prompt: "x",
+    });
+
+    vi.advanceTimersByTime(1_000);
+    expect(manager.spawn).toHaveBeenCalledTimes(1);
+    const optsArg = manager.spawn.mock.calls[0][4];
+    expect(optsArg.depth).toBe(3);
+    expect(optsArg.parentAgentId).toBe("parent-agent");
+  });
+
   it("disabled jobs do not fire", () => {
     const job = scheduler.addJob({
       name: "off", description: "x", schedule: "1s",

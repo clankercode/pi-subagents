@@ -45,6 +45,13 @@ export interface NewJobInput {
   isolation?: IsolationMode;
 }
 
+interface SchedulerSpawnDefaults {
+  /** Recursive depth for scheduled subagents fired from this session. */
+  depth?: number;
+  /** Parent subagent id for scheduled subagents fired from this session. */
+  parentAgentId?: string;
+}
+
 export class SubagentScheduler {
   private jobs = new Map<string, Cron>();
   private intervals = new Map<string, NodeJS.Timeout>();
@@ -52,13 +59,21 @@ export class SubagentScheduler {
   private pi: ExtensionAPI | undefined;
   private ctx: ExtensionContext | undefined;
   private manager: AgentManager | undefined;
+  private spawnDefaults: SchedulerSpawnDefaults = {};
 
   /** Start the scheduler: bind to a session's store and arm enabled jobs. */
-  start(pi: ExtensionAPI, ctx: ExtensionContext, manager: AgentManager, store: ScheduleStore): void {
+  start(
+    pi: ExtensionAPI,
+    ctx: ExtensionContext,
+    manager: AgentManager,
+    store: ScheduleStore,
+    spawnDefaults: SchedulerSpawnDefaults = {},
+  ): void {
     this.pi = pi;
     this.ctx = ctx;
     this.manager = manager;
     this.store = store;
+    this.spawnDefaults = spawnDefaults;
 
     for (const job of store.list()) {
       if (job.enabled) this.scheduleJob(job);
@@ -75,6 +90,7 @@ export class SubagentScheduler {
     this.pi = undefined;
     this.ctx = undefined;
     this.manager = undefined;
+    this.spawnDefaults = {};
   }
 
   /** True if start() has bound a store and the scheduler is active. */
@@ -247,6 +263,9 @@ export class SubagentScheduler {
         isolated: job.isolated,
         thinkingLevel: job.thinking,
         isolation: job.isolation,
+        eventBus: pi.events,
+        depth: this.spawnDefaults.depth,
+        parentAgentId: this.spawnDefaults.parentAgentId,
       });
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);

@@ -444,7 +444,7 @@ export default function (pi: ExtensionAPI) {
       if (!sessionId) return;  // sessionId not yet available — try again on next event
       const path = resolveStorePath(ctx.cwd, sessionId);
       const store = new ScheduleStore(path);
-      scheduler.start(pi, ctx, manager, store);
+      scheduler.start(pi, ctx, manager, store, { depth: nextSubagentDepth, parentAgentId: extensionAgentId });
       pi.events.emit("subagents:scheduler_ready", { sessionId, jobCount: store.list().length });
     } catch (err) {
       // Scheduling is non-essential — log and move on so the rest of the
@@ -478,6 +478,8 @@ export default function (pi: ExtensionAPI) {
     pi,
     getCtx: () => currentCtx,
     manager,
+    depth: nextSubagentDepth,
+    parentAgentId: extensionAgentId,
   });
 
   // Broadcast readiness so extensions loaded after us can discover us
@@ -1827,6 +1829,9 @@ Write the file using the write tool. Only write the file, nothing else.`;
     const record = await manager.spawnAndWait(pi, ctx, "general-purpose", generatePrompt, {
       description: `Generate ${name} agent`,
       maxTurns: 5,
+      eventBus: pi.events,
+      depth: nextSubagentDepth,
+      parentAgentId: extensionAgentId,
     });
 
     if (record.status === "error") {

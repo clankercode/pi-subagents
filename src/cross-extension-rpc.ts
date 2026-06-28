@@ -36,6 +36,10 @@ export interface RpcDeps {
   pi: unknown;                    // passed through to manager.spawn
   getCtx: () => unknown | undefined;  // returns current ExtensionContext
   manager: SpawnCapable;
+  /** Default recursive depth for RPC-spawned subagents in this session. */
+  depth?: number;
+  /** Parent subagent id for RPC-spawned subagents in this session. */
+  parentAgentId?: string;
 }
 
 export interface RpcHandle {
@@ -108,7 +112,16 @@ export function registerRpcHandlers(deps: RpcDeps): RpcHandle {
         normalizedOptions = { ...normalizedOptions, model: resolved };
       }
 
-      return { id: manager.spawn(pi, ctx, type, prompt, normalizedOptions) };
+      const spawnOptions = {
+        ...normalizedOptions,
+        eventBus: events,
+        depth: normalizedOptions.depth ?? deps.depth,
+        parentAgentId: normalizedOptions.parentAgentId ?? deps.parentAgentId,
+      };
+      if (spawnOptions.depth === undefined) delete spawnOptions.depth;
+      if (spawnOptions.parentAgentId === undefined) delete spawnOptions.parentAgentId;
+
+      return { id: manager.spawn(pi, ctx, type, prompt, spawnOptions) };
     },
   );
 

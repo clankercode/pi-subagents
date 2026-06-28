@@ -79,7 +79,7 @@ describe("cross-extension RPC", () => {
       await vi.waitFor(() => expect(reply).toHaveBeenCalled());
       expect(reply).toHaveBeenCalledWith({ success: true, data: { id: "agent-42" } });
       expect(manager.spawn).toHaveBeenCalledWith(
-        deps.pi, ctx, "general-purpose", "do stuff", {},
+        deps.pi, ctx, "general-purpose", "do stuff", { eventBus: events },
       );
     });
 
@@ -95,7 +95,30 @@ describe("cross-extension RPC", () => {
       await vi.waitFor(() => expect(reply).toHaveBeenCalled());
       expect(manager.spawn).toHaveBeenCalledWith(
         deps.pi, ctx, "Explore", "find it",
-        { description: "search", isBackground: true },
+        { description: "search", isBackground: true, eventBus: events },
+      );
+    });
+
+    it("passes the RPC event bus and recursive defaults to spawned agents", async () => {
+      deps = { ...deps, depth: 3, parentAgentId: "parent-agent" };
+      registerRpcHandlers(deps);
+      const reply = vi.fn();
+      events.on("subagents:rpc:spawn:reply:req-s-eventbus", reply);
+      events.emit("subagents:rpc:spawn", {
+        requestId: "req-s-eventbus", type: "Explore", prompt: "find it",
+        options: { description: "search", isBackground: true },
+      });
+
+      await vi.waitFor(() => expect(reply).toHaveBeenCalled());
+      expect(manager.spawn).toHaveBeenCalledWith(
+        deps.pi, ctx, "Explore", "find it",
+        {
+          description: "search",
+          isBackground: true,
+          eventBus: events,
+          depth: 3,
+          parentAgentId: "parent-agent",
+        },
       );
     });
 
@@ -264,7 +287,7 @@ describe("cross-extension RPC", () => {
       expect(reply).toHaveBeenCalledWith({ success: true, data: { id: "agent-42" } });
       expect(manager.spawn).toHaveBeenCalledWith(
         deps.pi, ctx, "general-purpose", "x",
-        { model: fakeModel },
+        { model: fakeModel, eventBus: events },
       );
     });
 
@@ -280,7 +303,7 @@ describe("cross-extension RPC", () => {
       await vi.waitFor(() => expect(reply).toHaveBeenCalled());
       expect(manager.spawn).toHaveBeenCalledWith(
         deps.pi, ctx, "general-purpose", "x",
-        { model: fakeModel },
+        { model: fakeModel, eventBus: events },
       );
     });
 
