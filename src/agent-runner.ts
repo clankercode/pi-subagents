@@ -11,6 +11,7 @@ import {
   type AgentSession,
   type AgentSessionEvent,
   createAgentSession,
+  createEventBus,
   DefaultResourceLoader,
   type ExtensionAPI,
   getAgentDir,
@@ -19,6 +20,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { BUILTIN_TOOL_NAMES, getAgentConfig, getConfig, getMemoryToolNames, getReadOnlyMemoryToolNames, getToolNamesForType } from "./agent-types.js";
 import { buildParentContext, extractText } from "./context.js";
+import type { EventBus } from "./cross-extension-rpc.js";
 import { DEFAULT_AGENTS } from "./default-agents.js";
 import { detectEnv } from "./env.js";
 import { buildMemoryBlock, buildReadOnlyMemoryBlock } from "./memory.js";
@@ -55,6 +57,40 @@ const RECURSIVE_TOOL_NAMES: string[] = [
 ];
 
 const EXTENSION_DEPTH_KEY = Symbol.for("pi-subagents:extension-depth");
+
+/** Lifecycle event names that should propagate from child to parent sessions. */
+const FORWARDABLE_EVENTS = new Set([
+  "subagents:created",
+  "subagents:started",
+  "subagents:completed",
+  "subagents:failed",
+  "subagents:compacted",
+]);
+
+/**
+ * Create a forwarding event bus for a child session.
+ * The child gets its own local bus for emit/on, but lifecycle events
+ * (subagents:*) are also forwarded to the parent bus so the parent widget
+ * can display depth 2+ agents.
+ */
+export function createForwardingEventBus(parentBus: EventBus): EventBus {
+  // Use the parent's EventBus factory to create a properly isolated local bus
+  const localBus = createEventBus();
+  return {
+    on(event, handler) {
+      // Subscribe to local bus only — child doesn't see parent/sibling events
+      return localBus.on(event, handler);
+    },
+    emit(event, data) {
+      // Always emit on local bus for child's own listeners
+      localBus.emit(event, data);
+      // Forward lifecycle events to parent bus for parent widget visibility
+      if (FORWARDABLE_EVENTS.has(event)) {
+        parentBus.emit(event, data);
+      }
+    },
+  };
+}
 const AUTO_EXPOSE_EXTENSION_NAMES = new Set(["pi-c2c"]);
 let extensionDepthLoadChain: Promise<void> = Promise.resolve();
 const packageNameCache = new Map<string, string[]>();
@@ -365,6 +401,9 @@ export interface RunOptions {
   depth?: number;
   /** Parent subagent id when spawned recursively from another subagent. */
   parentAgentId?: string;
+  /** Parent's event bus — shared with the child session so lifecycle events
+   * (subagents:created, subagents:started, etc.) propagate to the parent widget. */
+  eventBus?: EventBus;
 }
 
 export interface RunResult {
@@ -555,6 +594,11 @@ export async function runAgent(
           };
         };
 
+  // Create a forwarding event bus so the child session's lifecycle events
+  // (subagents:created, subagents:started, etc.) propagate to the parent's
+  // event bus — making depth 2+ agents visible in the parent widget.
+  const childEventBus = options.eventBus ? createForwardingEventBus(options.eventBus) : undefined;
+
   const loader = new DefaultResourceLoader({
     cwd: configCwd,
     agentDir,
@@ -567,6 +611,7 @@ export async function runAgent(
     noContextFiles: true,
     systemPromptOverride: () => systemPrompt,
     appendSystemPromptOverride: () => [],
+    eventBus: childEventBus,
   });
   await withLoadingExtensionDepth(depth, options.agentId, options.parentAgentId, () => loader.reload());
 
