@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-06-28
+
+### Fixed
+- **Depth 2+ subagents now appear in the TUI widget** — each child session's `DefaultResourceLoader` previously created its own isolated event bus, so lifecycle events (`subagents:created`, `subagents:started`, `subagents:completed`, `subagents:failed`) from depth 2+ agents never reached the parent's widget listener. A forwarding event bus now wraps the parent bus: the child gets its own isolated local bus, but lifecycle events are forwarded to the parent so the widget renders the full recursive agent tree.
+- **Agent tool description shows next spawn depth instead of agent's own depth** — the `{{currentDepth}}` placeholder and recursive guideline in the Agent tool description now show `extensionDepth + 1` (the depth the *next* spawned agent would be at) instead of `extensionDepth` (the agent's own depth), eliminating the off-by-one confusion where a depth-1 agent displayed "1/4" but spawned agents at depth 2.
+- **Event bus propagation covers all spawn paths** — RPC-spawned agents (`cross-extension-rpc.ts`), scheduled agents (`schedule.ts`), and `spawnAndWait` foreground agents now correctly receive the parent's event bus and recursive depth metadata, so lifecycle events from agents spawned via any path are visible in the parent widget.
+- **Dashboard UI action handlers** — steer, abort, and view-result row actions in the subagents management modal now route to the correct handler functions instead of silently no-opping.
+- **Dashboard UI duplicate module push guard** — the `ui_management` probe no longer pushes duplicate module entries when called multiple times in the same session.
+
+### Added
+- **Dashboard UI model column** — the subagents management modal now shows the model used by each agent (e.g. "opus", "sonnet") in a dedicated column.
+
 ## [0.11.0] - 2026-06-28
 
 ### Added

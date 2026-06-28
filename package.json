@@ -1,6 +1,6 @@
 {
   "name": "@clanker-code/pi-subagents",
-  "version": "0.11.0",
+  "version": "0.11.1",
   "description": "A pi extension extension that brings smart Claude Code-style autonomous sub-agents to pi.",
   "author": "clankercode",
   "license": "MIT",
