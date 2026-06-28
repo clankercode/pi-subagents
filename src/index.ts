@@ -1016,6 +1016,7 @@ export default function (pi: ExtensionAPI) {
           invocation: agentInvocation,
           depth: nextSubagentDepth,
           parentAgentId: extensionAgentId,
+          eventBus: pi.events,
           outputFileForAgent: (agentId) => createOutputFilePath(ctx.cwd, agentId, ctx.sessionManager.getSessionId()),
           onOutputFileCreated: (outputFile, agentId) => writeInitialEntry(outputFile, agentId, P.prompt!, ctx.cwd),
           ...bgCallbacks,

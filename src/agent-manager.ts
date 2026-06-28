@@ -12,6 +12,7 @@ import { isAbsolute } from "node:path";
 import type { Model } from "@earendil-works/pi-ai";
 import type { AgentSession, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { resumeAgent, runAgent, type ToolActivity } from "./agent-runner.js";
+import type { EventBus } from "./cross-extension-rpc.js";
 import { type AgentInvocation, type AgentRecord, type IsolationMode, MAX_RECURSIVE_DEPTH, type SubagentType, type ThinkingLevel } from "./types.js";
 import { addUsage } from "./usage.js";
 import { cleanupWorktree, createWorktree, pruneWorktrees, } from "./worktree.js";
@@ -102,6 +103,8 @@ interface SpawnOptions {
   onAssistantUsage?: (usage: { input: number; output: number; cacheWrite: number }) => void;
   /** Called when the session successfully compacts. */
   onCompaction?: (info: CompactionInfo) => void;
+  /** Parent's event bus — shared with child sessions so lifecycle events propagate to the parent widget. */
+  eventBus?: EventBus;
 }
 
 interface ResumeOptions {
@@ -310,6 +313,7 @@ export class AgentManager {
       },
       depth: record.depth,
       parentAgentId: record.parentAgentId,
+      eventBus: options.eventBus,
       onSessionCreated: (session) => {
         record.session = session;
         // Flush any steers that arrived before the session was ready
