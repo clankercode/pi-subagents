@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`widgetMode` setting — control what the above-editor widget shows: `all` / `background` / `off`** ([#117](https://github.com/tintinweb/pi-subagents/pull/117) — thanks [@Alan-TheGentleman](https://github.com/Alan-TheGentleman); fixes [#118](https://github.com/tintinweb/pi-subagents/issues/118)). Foreground agents already render inline as the `Agent` tool result, so also listing them in the persistent widget double-rendered the same run (most visible in tmux/zellij). `widgetMode` (via `/agents → Settings → Widget`, or `subagents.json`) selects the widget's contents: `all` shows every agent (the previous behavior), `background` shows background/queued/scheduled/RPC runs but hides foreground, and `off` hides the widget entirely (agents still appear inline and in FleetView). Applied live — toggling refreshes immediately. Filtering keys off a new tri-state `AgentRecord.isBackground` captured at spawn (`true` = background, `false` = foreground, `undefined` = undeclared, e.g. a cross-extension RPC spawn), independent of the UI-only `invocation` snapshot — so scheduler- and RPC-spawned background agents stay visible instead of vanishing; only runs *known* to be foreground are dropped. The running-status line was also refactored from one multiline `Text` into two component rows, so rapid partial updates replace cleanly instead of leaving stale rows behind in terminal multiplexers — identical on-screen output, no more ghost lines.
+
+### Changed
+- **The above-editor widget now hides foreground agents by default** (`widgetMode` defaults to `background`). Foreground runs still render inline as the `Agent` tool result (and in FleetView); set `/agents → Settings → Widget` to `all` to restore the previous show-everything view, or `off` to hide the widget. Existing `subagents.json` files load unchanged (absent → `background`).
+
 ## [0.12.0] - 2026-06-24
 
 ### Added
