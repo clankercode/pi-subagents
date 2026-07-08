@@ -2,7 +2,15 @@
  * dashboard-ui.test.ts — Tests for dashboard UI module registration.
  * Verifies module descriptors, data handlers, and action handlers.
  */
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// Capture openInViewer's spawn so view-result tests can assert the transcript
+// is opened host-side without launching a real viewer process.
+const { spawnMock } = vi.hoisted(() => ({
+	spawnMock: vi.fn(() => ({ unref: vi.fn(), on: vi.fn() })),
+}));
+vi.mock("node:child_process", () => ({ spawn: spawnMock }));
+
 import { registerDashboardModules } from "../src/dashboard-ui.js";
 
 function makeManager(overrides?: { agents?: any[] }) {
@@ -190,40 +198,111 @@ describe("subagents:rows data handler", () => {
 });
 
 describe("subagents:ui:view-result handler", () => {
-  it("returns agent result in items", () => {
-    const events = makeEvents();
-    const manager = makeManager({ agents: [sampleAgent] });
-    registerDashboardModules(makePi(events), manager);
+  beforeEach(() => spawnMock.mockClear());
 
-    // Bridge spreads msg.params into data; withRowParams nests row.
+  it("opens the agent's outputFile host-side (no inline reply)", () => {
+    const events = makeEvents();
+    registerDashboardModules(makePi(events), makeManager({ agents: [sampleAgent] }));
+
     const data: any = { row: { id: "agent-1" } };
     events.emit("subagents:ui:view-result", data);
 
-    expect(data.items).toHaveLength(1);
-    expect(data.items[0].result).toBe("Hello from agent");
-    expect(data.items[0].id).toBe("agent-1");
+    // The dashboard table only renders rows for its bound dataEvent, so a
+    // row-action detail reply can't be displayed. The handler opens the
+    // transcript externally and must NOT set data.items.
+    expect(data.items).toBeUndefined();
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    const spawnArgs = spawnMock.mock.calls[0][1];
+    expect(spawnArgs).toContain("/tmp/output.log");
   });
 
-  it("handles missing agent gracefully", () => {
+  it("handles a missing agent gracefully (no open, no throw)", () => {
     const events = makeEvents();
     registerDashboardModules(makePi(events), makeManager({ agents: [] }));
 
     const data: any = { row: { id: "nonexistent" } };
-    // Should not throw
     events.emit("subagents:ui:view-result", data);
+
     expect(data.items).toBeUndefined();
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 
-  it("truncates long results to 2000 chars", () => {
+  it("falls back to a tmp result file when the agent has no outputFile", () => {
     const events = makeEvents();
-    const longResult = { ...sampleAgent, result: "x".repeat(5000) };
-    registerDashboardModules(makePi(events), makeManager({ agents: [longResult] }));
+    const noFile = { ...sampleAgent, outputFile: undefined };
+    registerDashboardModules(makePi(events), makeManager({ agents: [noFile] }));
 
     const data: any = { row: { id: "agent-1" } };
     events.emit("subagents:ui:view-result", data);
 
-    expect(data.items[0].result.length).toBeLessThan(5000);
-    expect(data.items[0].result).toContain("…(truncated)");
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    const spawnArgs = spawnMock.mock.calls[0][1];
+    expect(spawnArgs.some((a: string) => /result-agent-1\.txt$/.test(a))).toBe(true);
+  });
+});
+
+describe("subagents:ui:steer-form handler (steer-with-input)", () => {
+  it("probe pushes a /steer-subagent form module when agents are running", () => {
+    const events = makeEvents();
+    const running = { ...sampleAgent, id: "r1", status: "running" };
+    registerDashboardModules(makePi(events), makeManager({ agents: [running] }));
+
+    const probe = { modules: [] as any[] };
+    events.emit("ui:list-modules", probe);
+
+    const form = probe.modules.find((m: any) => m.kind === "management-modal" && m.id === "subagents-steer");
+    expect(form).toBeDefined();
+    expect(form.command).toBe("/steer-subagent");
+    expect(form.view.kind).toBe("form");
+    const agentField = form.view.fields.find((f: any) => f.key === "agentId");
+    expect(agentField.kind).toBe("select");
+    expect(agentField.options[0]).toContain("r1");
+    const msgField = form.view.fields.find((f: any) => f.key === "message");
+    expect(msgField.kind).toBe("textarea");
+    expect(form.view.actions[0].event).toBe("subagents:ui:steer-form");
+  });
+
+  it("does NOT push the steer form when no agents are running/queued", () => {
+    const events = makeEvents();
+    registerDashboardModules(makePi(events), makeManager({ agents: [sampleAgent] }));
+
+    const probe = { modules: [] as any[] };
+    events.emit("ui:list-modules", probe);
+
+    expect(probe.modules.find((m: any) => m.id === "subagents-steer")).toBeUndefined();
+  });
+
+  it("steers the chosen running agent with the typed message (values nested under row)", () => {
+    const steer = vi.fn().mockResolvedValue(undefined);
+    const running = { ...sampleAgent, id: "r1", status: "running", session: { steer } };
+    const events = makeEvents();
+    registerDashboardModules(makePi(events), makeManager({ agents: [running] }));
+
+    events.emit("subagents:ui:steer-form", { row: { agentId: "r1 — test task", message: "ship it" } });
+
+    expect(steer).toHaveBeenCalledWith("ship it");
+  });
+
+  it("steers with the typed message when values are spread into data", () => {
+    const steer = vi.fn().mockResolvedValue(undefined);
+    const running = { ...sampleAgent, id: "r1", status: "running", session: { steer } };
+    const events = makeEvents();
+    registerDashboardModules(makePi(events), makeManager({ agents: [running] }));
+
+    events.emit("subagents:ui:steer-form", { agentId: "r1", message: "go faster" });
+
+    expect(steer).toHaveBeenCalledWith("go faster");
+  });
+
+  it("ignores a submit with no message", () => {
+    const steer = vi.fn().mockResolvedValue(undefined);
+    const running = { ...sampleAgent, id: "r1", status: "running", session: { steer } };
+    const events = makeEvents();
+    registerDashboardModules(makePi(events), makeManager({ agents: [running] }));
+
+    events.emit("subagents:ui:steer-form", { row: { agentId: "r1", message: "" } });
+
+    expect(steer).not.toHaveBeenCalled();
   });
 });
 

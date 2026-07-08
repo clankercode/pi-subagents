@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Herdr `working` status** — when inside a [herdr](https://herdr.dev)-managed pane and the new `herdrReportWorking` setting is on (default `true`), the extension reports the pane as `working` (custom-status `running subagents`) for the duration that ≥1 subagent is running, and releases the status authority when the last one finishes. Without this, herdr screen-scrapes the parent pane's buffer and mis-classifies the blocked-waiting parent as `idle` while subagents do the real work. Refcounted across foreground/background/concurrent/resume/abort paths. No-op outside herdr. Toggle via `/agents → Settings → Herdr status`.
+- **Steer-with-input form (`/steer-subagent`)** — new dashboard management-modal form (agent picker + message textarea) that steers a running subagent with a user-typed message. The row-action `Steer` button on the `/subagents` table can't collect text (the dashboard's `UiAction` only supports a yes/no `confirm`), so the form is the in-protocol way to send custom steer text. The agent list rebuilds on every probe so it stays current.
+
+### Fixed
+
+- **Dashboard `View Result` row action now opens the log** — it previously replied with a `ui_data_list` on the row-action event, but the dashboard's `/subagents` table only ever renders rows for its bound `dataEvent` (`subagents:rows`), so the reply was stored and never displayed (nothing happened). The action now opens the agent's streaming `outputFile` (always present) in the host's default viewer (`xdg-open`/`open`/`start`), falling back to a tmp file of the result text when no `outputFile` exists. This is the one reliable way to surface a subagent log from this modal — the protocol has no row-action detail-view mechanism. (The first-party `SubagentDetailView` inspector is not an option for this fork: it's hard-coupled to `@blackbelt-technology/pi-dashboard-subagents`, a competing subagent engine that conflicts with this extension.)
 
 ## [0.11.1] - 2026-06-28
 

@@ -7,6 +7,10 @@
  * 3. Round-trip event handlers for data fetch, abort, and steer actions
  */
 
+import { spawn } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentManager } from "./agent-manager.js";
 import { formatMs, getDisplayName } from "./ui/agent-widget.js";
@@ -37,6 +41,9 @@ interface ExtensionUiModule {
       label: string;
       kind: string;
       width?: string | number;
+      options?: string[];
+      placeholder?: string;
+      required?: boolean;
     }>;
     rowActions?: Array<{
       id: string;
@@ -91,6 +98,41 @@ function formatTokenCount(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
   return String(n);
+}
+
+/**
+ * Open a file in the host's default viewer (xdg-open / open / start).
+ * Fire-and-forget, detached, never throws — used by the View Result row
+ * action because the management-modal table can't render a detail/log view.
+ */
+function openInViewer(filePath: string): boolean {
+  if (!filePath) return false;
+  const cmd = process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
+  const args = process.platform === "win32" ? ["/c", "start", "", filePath] : [filePath];
+  try {
+    const child = spawn(cmd, args, { detached: true, stdio: "ignore" });
+    child.unref();
+    child.on?.("error", () => {});
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Fallback for View Result when an agent has no outputFile: write the result
+ * text to a tmp .txt so openInViewer can still surface something. Best-effort.
+ */
+function writeResultToTmp(agentId: string, result: string | undefined): string {
+  try {
+    const dir = join(tmpdir(), "pi-subagents");
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, `result-${agentId}.txt`);
+    writeFileSync(path, (result ?? "(no result yet)").slice(0, 200_000), "utf-8");
+    return path;
+  } catch {
+    return "";
+  }
 }
 
 /**
@@ -202,6 +244,52 @@ export function registerDashboardModules(pi: ExtensionAPI, manager: AgentManager
         ],
       },
     } as ExtensionUiModule);
+
+    // Steer-with-input form module. Row actions can't collect text
+    // (UiAction only supports a yes/no `confirm`), so a separate form module
+    // lets the user pick a running subagent and type a steer message. The
+    // agent list is rebuilt on every probe (scheduleInvalidate re-fires
+    // ui:list-modules), so it stays current.
+    const steerables = agents.filter(a => a.status === "running" || a.status === "queued");
+    if (steerables.length > 0) {
+      probe.modules.push({
+        kind: "management-modal",
+        id: "subagents-steer",
+        command: "/steer-subagent",
+        title: "Steer subagent",
+        description: "Send a steering message to a running subagent",
+        icon: "mdiMessageArrowRight",
+        category: "subagents",
+        view: {
+          kind: "form",
+          fields: [
+            {
+              key: "agentId",
+              label: "Subagent",
+              kind: "select",
+              options: steerables.map(a => `${a.id} — ${a.description || a.type}`),
+              required: true,
+            },
+            {
+              key: "message",
+              label: "Message",
+              kind: "textarea",
+              placeholder: "Steering message to inject into the subagent's turn",
+              required: true,
+            },
+          ],
+          actions: [
+            {
+              id: "steer",
+              label: "Steer",
+              icon: "mdiSend",
+              variant: "primary",
+              event: "subagents:ui:steer-form",
+            },
+          ],
+        },
+      } as ExtensionUiModule);
+    }
   }) as any);
 
   // ── 2. Data Fetch Handler ──────────────────────────────────────────
@@ -217,33 +305,25 @@ export function registerDashboardModules(pi: ExtensionAPI, manager: AgentManager
     scheduleInvalidate();
   }) as any);
 
-  // View Result: return the agent's result as table rows so the modal
-  // displays it. The bridge's synchronous fast path calls `_reply(items)`
-  // when `data.items` is populated by the handler — do NOT call
-  // `scheduleInvalidate()` here as the subsequent re-probe would
-  // overwrite the returned rows with the original table data.
+  // View Result: open the agent's streaming transcript (outputFile) host-side.
+  // The management-modal table only renders rows for its bound dataEvent
+  // (subagents:rows); a row action that replies ui_data_list on a different
+  // event is stored by the dashboard (uiDataMap[event]) but NEVER displayed
+  // (confirmed against the dashboard 0.5.4 reducer + table read logic). So a
+  // detail/log view is impossible from this row action. Instead, open the
+  // agent's outputFile (always present — the streaming transcript) in the
+  // user's default viewer. The handler runs in the pi process, so spawning a
+  // viewer works. This is the one reliable way to surface the full log here.
   pi.events.on("subagents:ui:view-result", ((data: any) => {
-    // Bridge spreads msg.params into data; row identity is at data.row.id.
+    // The browser sends the whole row under params.row; data.row.id is the id.
     const agentId = data.row?.id ?? data.id;
     if (!agentId) return;
     const record = manager.getRecord(agentId);
     if (!record) return;
-
-    const resultText = record.result?.trim() || "No output yet.";
-    const preview = resultText.length > 2000
-      ? resultText.slice(0, 2000) + "\n…(truncated)"
-      : resultText;
-
-    // Populate data.items — the bridge's synchronous fast path forwards
-    // this as a `ui_data_list` message back to the dashboard.
-    data.items = [{
-      id: record.id,
-      type: getDisplayName(record.type),
-      description: record.description,
-      status: record.status,
-      result: preview,
-      outputFile: record.outputFile ?? "",
-    }];
+    const target = record.outputFile && record.outputFile.length > 0
+      ? record.outputFile
+      : writeResultToTmp(record.id, record.result);
+    if (target) openInViewer(target);
   }) as any);
 
   // Abort: stop the running agent via the manager's abort() method
@@ -272,6 +352,28 @@ export function registerDashboardModules(pi: ExtensionAPI, manager: AgentManager
       // Session not yet created — queue the steer for flush on start
       if (!record.pendingSteers) record.pendingSteers = [];
       record.pendingSteers.push("Continue");
+    }
+    scheduleInvalidate();
+  }) as any);
+
+  // Steer form submit (subagents:ui:steer-form): the /steer-subagent form's
+  // Steer action with a user-typed message. Form field values may arrive
+  // spread into `data` or nested under `data.row` (dashboard 0.5.4's
+  // form-view value wiring is unverified), so read both. The agent picker
+  // option is "<id> — <desc>"; split off the id.
+  pi.events.on("subagents:ui:steer-form", ((data: any) => {
+    const raw = (data?.row && typeof data.row === "object") ? data.row : data;
+    const agentSel = String(raw?.agentId ?? raw?.agent ?? "");
+    const message = String(raw?.message ?? "").trim();
+    const agentId = agentSel.split(" — ")[0].trim();
+    if (!agentId || !message) return;
+    const record = manager.getRecord(agentId);
+    if (!record) return;
+    if (record.status === "running" && record.session) {
+      record.session.steer(message).catch(() => {});
+    } else if (record.status === "queued") {
+      if (!record.pendingSteers) record.pendingSteers = [];
+      record.pendingSteers.push(message);
     }
     scheduleInvalidate();
   }) as any);
