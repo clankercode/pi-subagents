@@ -7,13 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-07-08
+
+This release merges upstream ([tintinweb/pi-subagents](https://github.com/tintinweb/pi-subagents)) through v0.13.0 — adopting FleetView, `persist_session`, foreground lifecycle symmetry, forgiving model resolution, and more — while preserving every fork feature (herdr, dashboard UI, event-forwarding, recursive widget tree, c2c, scheduling, retry handles, abort-resend, wait timeout, tool-description mode, custom agents).
+
 ### Added
 
+- **FleetView — Claude Code-style subagent navigator below the editor** (upstream #114) — a persistent, navigable list of `main` + active subagents beneath the editor, auto-shown whenever agents run. `↓`/`←` at an empty prompt enters the list, `↑`/`↓` selects, `Enter` opens the live conversation overlay, `Esc` returns. Toggle via `/agents → Settings → Fleet view` (default on). Pure-UI, no LLM-context cost.
+- **`persist_session` / `session_dir` agent frontmatter** (upstream #111) — `persist_session: true` writes the subagent's full transcript to pi's session location (inspectable and resumable) instead of keeping it in memory only. `session_dir` optionally overrides the path.
+- **Widget mode for the above-editor widget** (upstream #118) — new `widgetMode` setting: `background` (default — hide foreground agents that already render inline as the Agent tool result), `all`, or `off`.
+- **Foreground agent lifecycle symmetry** (upstream #105) — `onComplete` now fires for foreground agents too (with `resultConsumed` pre-set), and foreground conversations stream to `.output` files.
+- **Forgiving model resolution + richer Agent types list** (upstream) — agent model pins resolve fuzzily (date-stamp optional, provider fallback) and the `/agents` types list shows each agent's resolved model.
 - **Herdr `working` status** — when inside a [herdr](https://herdr.dev)-managed pane and the new `herdrReportWorking` setting is on (default `true`), the extension reports the pane as `working` (custom-status `running subagents`) for the duration that ≥1 subagent is running, and releases the status authority when the last one finishes. Without this, herdr screen-scrapes the parent pane's buffer and mis-classifies the blocked-waiting parent as `idle` while subagents do the real work. Refcounted across foreground/background/concurrent/resume/abort paths. No-op outside herdr. Toggle via `/agents → Settings → Herdr status`.
 - **Steer-with-input form (`/steer-subagent`)** — new dashboard management-modal form (agent picker + message textarea) that steers a running subagent with a user-typed message. The row-action `Steer` button on the `/subagents` table can't collect text (the dashboard's `UiAction` only supports a yes/no `confirm`), so the form is the in-protocol way to send custom steer text. The agent list rebuilds on every probe so it stays current.
 
 ### Fixed
 
+- **Preserve unread completed subagents across session events** (upstream #108) — `clearCompleted(skipUnconsumed)` now keeps results the LLM hasn't read yet across `/new`, `/resume`, and session switches; the 10-minute cleanup timer handles eventual eviction.
 - **Dashboard `View Result` row action now opens the log** — it previously replied with a `ui_data_list` on the row-action event, but the dashboard's `/subagents` table only ever renders rows for its bound `dataEvent` (`subagents:rows`), so the reply was stored and never displayed (nothing happened). The action now opens the agent's streaming `outputFile` (always present) in the host's default viewer (`xdg-open`/`open`/`start`), falling back to a tmp file of the result text when no `outputFile` exists. This is the one reliable way to surface a subagent log from this modal — the protocol has no row-action detail-view mechanism. (The first-party `SubagentDetailView` inspector is not an option for this fork: it's hard-coupled to `@blackbelt-technology/pi-dashboard-subagents`, a competing subagent engine that conflicts with this extension.)
 
 ## [0.11.1] - 2026-06-28

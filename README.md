@@ -30,10 +30,12 @@ Upstream changes are reviewed for cherry-picking when practical; otherwise they 
 - **Parallel background agents** — spawn multiple agents that run concurrently with automatic queuing (configurable concurrency limit, default 4). Each agent notifies individually on completion (async join; configurable to smart/group for consolidated notifications)
 - **Live widget UI** — persistent above-editor widget with animated spinners, live tool activity, token counts, and colored status icons
 - **Conversation viewer** — select any agent in `/agents` to open a live-scrolling overlay of its full conversation (auto-follows new content, scroll up to pause). Stop a still-running agent from here by pressing `x` (then `x` again to confirm) — works for background agents too
+- **FleetView** — a Claude Code-style navigable list of `main` + active subagents renders beneath the editor whenever agents are running (auto-shown, no keypress needed). `↓`/`←` at an empty prompt enters the list, `↑`/`↓` selects, `Enter` opens the live conversation overlay, `Esc` returns. Toggle via `/agents → Settings → Fleet view` (default on); pure-UI, no LLM-context cost
 - **Custom agent types** — define agents in `.pi/agents/<name>.md` with YAML frontmatter: custom system prompts, model selection, thinking levels, tool restrictions
 - **Mid-run steering** — inject messages into running agents to redirect their work without restarting
 - **Agent record maintenance** — `list_subagents` gives the LLM a compact retained-agent summary (active, problem, recent done, hidden done count) and `clear_subagents` clears old completed records without touching active agents
 - **Session resume** — pick up where an agent left off, preserving full conversation context
+- **Persistent subagent sessions** — set `persist_session: true` in agent frontmatter to write the subagent's full transcript to pi's session location (`~/.pi/agent/sessions` — inspectable and resumable after the fact) instead of in-memory only; `session_dir` optionally overrides the path. Useful for long-running multi-round orchestrations
 - **Graceful turn limits** — agents get a "wrap up" warning before hard abort, producing clean partial results instead of cut-off output
 - **Case-insensitive agent types** — `"explore"`, `"Explore"`, `"EXPLORE"` all work. Unknown types fall back to general-purpose with a note
 - **Fuzzy model selection** — specify models by name (`"haiku"`, `"sonnet"`) instead of full IDs, with automatic filtering to only available/configured models
