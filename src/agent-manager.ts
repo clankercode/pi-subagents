@@ -196,6 +196,12 @@ export class AgentManager {
       abortController,
       lifetimeUsage: { input: 0, output: 0, cacheWrite: 0 },
       compactionCount: 0,
+      // Raw tri-state (not coerced to a boolean): true = background, false =
+      // foreground (has an inline tool-result surface), undefined = caller never
+      // declared it (e.g. a cross-extension RPC spawn). The widget's background-
+      // only filter excludes only explicit `false`, so undefined agents — which
+      // have no inline surface — stay visible instead of vanishing.
+      isBackground: options.isBackground,
       invocation: options.invocation,
       depth,
       parentAgentId: options.parentAgentId,
@@ -361,7 +367,12 @@ export class AgentManager {
           }
         }
 
-        if (options.isBackground) {
+        // Fire onComplete for foreground agents too — lifecycle symmetry.
+        // Mark resultConsumed so the callback skips notifications (result returned inline).
+        if (!options.isBackground) {
+          record.resultConsumed = true;
+          try { this.onComplete?.(record); } catch { /* ignore completion side-effect errors */ }
+        } else {
           this.completeBackground(record, true);
         }
         return responseText;
@@ -391,13 +402,23 @@ export class AgentManager {
           } catch { /* ignore cleanup errors */ }
         }
 
-        if (options.isBackground) {
+        // Fire onComplete for foreground agents too — lifecycle symmetry.
+        // Mark resultConsumed so the callback skips notifications (result returned inline).
+        if (!options.isBackground) {
+          record.resultConsumed = true;
+          try { this.onComplete?.(record); } catch { /* ignore completion side-effect errors */ }
+        } else {
           this.completeBackground(record, true);
         }
         return "";
       });
 
     record.promise = promise;
+
+    // Notify caller that spawn is complete (record is in the map, promise is set).
+    // Called synchronously — onSessionCreated fires asynchronously inside runAgent.
+    // Used by spawnAndWait to let the caller set up output files before streaming starts.
+    this.onSpawned?.(id);
   }
 
   /** Start queued agents up to the concurrency limit. */
@@ -420,8 +441,19 @@ export class AgentManager {
   }
 
   /**
+   * Called synchronously right after spawn, before onSessionCreated fires.
+   * Lets the caller set up the output file path on the record.
+   * The record is guaranteed to be in this.agents at this point.
+   */
+  private onSpawned?: (id: string) => void;
+
+  /**
    * Spawn an agent and wait for completion (foreground use).
    * Foreground agents bypass the concurrency queue.
+   * Returns { id, record } so callers can access the agent ID.
+   *
+   * @param onSpawned - Called synchronously after spawn(), before onSessionCreated fires.
+   *   Use this to set record.outputFile so streamToOutputFile can pick it up.
    */
   async spawnAndWait(
     pi: ExtensionAPI,
@@ -429,11 +461,18 @@ export class AgentManager {
     type: SubagentType,
     prompt: string,
     options: Omit<SpawnOptions, "isBackground">,
-  ): Promise<AgentRecord> {
-    const id = this.spawn(pi, ctx, type, prompt, { ...options, isBackground: false });
-    const record = this.agents.get(id)!;
-    await record.promise;
-    return record;
+    onSpawned?: (id: string) => void,
+  ): Promise<{ id: string; record: AgentRecord }> {
+    const prevOnSpawned = this.onSpawned;
+    this.onSpawned = onSpawned;
+    try {
+      const id = this.spawn(pi, ctx, type, prompt, { ...options, isBackground: false });
+      const record = this.agents.get(id)!;
+      await record.promise;
+      return { id, record };
+    } finally {
+      this.onSpawned = prevOnSpawned;
+    }
   }
 
   /** Resume an existing agent session in the background. */
@@ -503,6 +542,27 @@ export class AgentManager {
     return record;
   }
 
+  /**
+   * Send a steering message to an agent from the UI (mirrors the steer_subagent
+   * tool). A live session delivers it now — it interrupts the agent after its
+   * current tool execution and appears as a user message. If the session isn't
+   * ready yet, the message is queued on `pendingSteers` and flushed when the
+   * session is created. Returns false if the agent can't accept steering
+   * (unknown id, or no longer running/queued).
+   */
+  steer(id: string, message: string): boolean {
+    const record = this.agents.get(id);
+    if (!record) return false;
+    if (record.status !== "running" && record.status !== "queued") return false;
+    if (record.session) {
+      record.session.steer(message).catch(() => {});
+    } else {
+      if (!record.pendingSteers) record.pendingSteers = [];
+      record.pendingSteers.push(message);
+    }
+    return true;
+  }
+
   getRecord(id: string): AgentRecord | undefined {
     return this.agents.get(id);
   }
@@ -568,10 +628,13 @@ export class AgentManager {
   /**
    * Remove all completed/stopped/errored records immediately.
    * Called on session start/switch so tasks from a prior session don't persist.
+   * Pass skipUnconsumed=true to preserve records the LLM hasn't read yet
+   * (resultConsumed=false) — they will be evicted by the 10-minute cleanup timer instead.
    */
-  clearCompleted(): void {
+  clearCompleted(skipUnconsumed = false): void {
     for (const [id, record] of this.agents) {
       if (record.status === "running" || record.status === "queued") continue;
+      if (skipUnconsumed && !record.resultConsumed) continue;
       this.removeRecord(id, record);
     }
   }

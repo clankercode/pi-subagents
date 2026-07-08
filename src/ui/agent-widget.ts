@@ -7,7 +7,7 @@
 
 import type { AgentManager } from "../agent-manager.js";
 import { getConfig } from "../agent-types.js";
-import type { AgentInvocation, SubagentType } from "../types.js";
+import type { AgentInvocation, SubagentType, WidgetMode } from "../types.js";
 import type { LifetimeUsage, SessionLike } from "../usage.js";
 import {
   renderAgentTree,
@@ -296,11 +296,37 @@ export class AgentWidget {
   constructor(
     private manager: AgentManager,
     private agentActivity: Map<string, AgentActivity>,
+    /**
+     * Read live at render time. Selects which agents the widget shows — see
+     * `WidgetMode`. Defaults to `"all"` when a caller supplies no policy; the
+     * extension supplies one defaulting to `"background"`.
+     */
+    private mode: () => WidgetMode = () => "all",
   ) {}
 
   setDisplayMode(mode: WidgetDisplayMode) {
     this.displayMode = mode;
     this.update();
+  }
+
+  /**
+   * Agents eligible for the widget, per the current `WidgetMode`:
+   *   - `off`: none (the widget's existing empty-state path hides it entirely).
+   *   - `background`: drop only agents *known* to be foreground
+   *     (`isBackground === false`); keep everything else — background, queued,
+   *     scheduled, or RPC-spawned (`undefined`). Keying off the `isBackground`
+   *     record flag rather than the UI-only `invocation` snapshot (which only the
+   *     Agent-tool path sets), and excluding rather than allow-listing, means
+   *     only proven-foreground runs drop out — nothing else silently vanishes.
+   *   - `all`: every agent.
+   */
+  private widgetAgents() {
+    const all = this.manager.listAgents();
+    switch (this.mode()) {
+      case "off": return [];
+      case "background": return all.filter(a => a.isBackground !== false);
+      default: return all;
+    }
   }
 
   upsertSnapshot(snapshot: WidgetAgentSnapshot) {
@@ -327,6 +353,7 @@ export class AgentWidget {
     this.finishedAt.clear();
     this.update();
   }
+
 
   /** Set the UI context (grabbed from first tool execution). */
   setUICtx(ctx: UICtx) {
@@ -402,7 +429,7 @@ export class AgentWidget {
 
   private visibleSnapshots(): WidgetAgentSnapshot[] {
     const merged = new Map(this.descendantSnapshots);
-    const allAgents = this.manager.listAgents();
+    const allAgents = this.widgetAgents();
     for (const a of allAgents) {
       if (a.status === "running" || a.status === "queued") {
         this.finishedTurnAge.delete(a.id);

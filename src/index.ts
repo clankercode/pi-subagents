@@ -41,7 +41,7 @@ import { resolveStorePath, ScheduleStore } from "./schedule-store.js";
 import { applyAndEmitLoaded, DEFAULT_WAIT_TIMEOUT_SECONDS, type SubagentsSettings, saveAndEmitChanged, type ToolDescriptionMode } from "./settings.js";
 import { getStatusNote } from "./status-note.js";
 import { registerSubagentListClearTools } from "./subagent-list-clear.js";
-import { type AgentConfig, type AgentInvocation, type AgentRecord, type JoinMode, MAX_RECURSIVE_DEPTH, type NotificationDetails, type SubagentType } from "./types.js";
+import { type AgentConfig, type AgentInvocation, type AgentRecord, type JoinMode, MAX_RECURSIVE_DEPTH, type NotificationDetails, type SubagentType, type WidgetMode } from "./types.js";
 import { renderAgentCall, renderAgentResult, renderSteerCall, snipMiddleLines, tailPreview } from "./ui/agent-tool-rendering.js";
 import {
   type AgentActivity,
@@ -55,6 +55,7 @@ import {
   type UICtx,
 } from "./ui/agent-widget.js";
 import type { WidgetAgentSnapshot, WidgetDisplayMode } from "./ui/agent-widget-tree.js";
+import { FleetList, type FleetUICtx } from "./ui/fleet-list.js";
 import { menuSelect } from "./ui/menu-select.js";
 import { showSchedulesMenu } from "./ui/schedule-menu.js";
 import { addUsage, getLifetimeTotal, getSessionContextPercent } from "./usage.js";
@@ -267,6 +268,7 @@ export default function (pi: ExtensionAPI) {
   function sendIndividualNudge(record: AgentRecord) {
     agentActivity.delete(record.id);
     widget.markFinished(record.id);
+    fleet.onAgentFinished(record.id);
     scheduleNudge(record.id, () => emitIndividualNudge(record));
     widget.update();
   }
@@ -274,7 +276,7 @@ export default function (pi: ExtensionAPI) {
   // ---- Group join manager ----
   const groupJoin = new GroupJoinManager(
     (records, partial) => {
-      for (const r of records) { agentActivity.delete(r.id); widget.markFinished(r.id); }
+      for (const r of records) { agentActivity.delete(r.id); widget.markFinished(r.id); fleet.onAgentFinished(r.id); }
 
       const groupKey = `group:${records.map(r => r.id).join(",")}`;
       scheduleNudge(groupKey, () => {
@@ -380,6 +382,7 @@ export default function (pi: ExtensionAPI) {
     if (record.resultConsumed) {
       agentActivity.delete(record.id);
       widget.markFinished(record.id);
+      fleet.onAgentFinished(record.id);
       widget.update();
       return;
     }
@@ -472,7 +475,7 @@ export default function (pi: ExtensionAPI) {
     currentCtx = ctx;
     clearBatchState();
     groupJoin.dispose();
-    manager.clearCompleted();
+    manager.clearCompleted(true);
     widget.clearSnapshots();
     retryStash.clear();
     if (isSchedulingEnabled() && !scheduler.isActive()) startScheduler(ctx);
@@ -481,7 +484,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_before_switch", () => {
     clearBatchState();
     groupJoin.dispose();
-    manager.clearCompleted();
+    manager.clearCompleted(true);
     widget.dispose();
     retryStash.clear();
     scheduler.stop();
@@ -516,6 +519,7 @@ export default function (pi: ExtensionAPI) {
     groupJoin.dispose();
     manager.abortAll();
     widget.dispose();
+    fleet.dispose();
     for (const timer of pendingNudges.values()) clearTimeout(timer);
     pendingNudges.clear();
     retryStash.clear();
@@ -523,8 +527,15 @@ export default function (pi: ExtensionAPI) {
     manager.dispose();
   });
 
-  // Live widget: show running agents above editor
-  const widget = new AgentWidget(manager, agentActivity);
+  // Live widget: show running agents above editor.
+  // widgetMode (default "background") selects what the widget shows: "all" =
+  // every agent; "background" = hide foreground (they already render inline as
+  // the Agent tool result — showing them here too is a duplicate, #118), keep
+  // everything else; "off" = hide the widget entirely. Read live at render time.
+  let widgetMode: WidgetMode = "background";
+  function getWidgetMode(): WidgetMode { return widgetMode; }
+  const widget = new AgentWidget(manager, agentActivity, getWidgetMode);
+  function setWidgetMode(m: WidgetMode): void { widgetMode = m; widget.update(); }
   const upsertWidgetEventSnapshot = (payload: unknown) => {
     const snapshot = widgetSnapshotFromEvent(payload);
     if (snapshot) widget.upsertSnapshot(snapshot);
@@ -541,6 +552,12 @@ export default function (pi: ExtensionAPI) {
     widgetDisplayMode = mode;
     widget.setDisplayMode(mode);
   }
+
+  // Claude Code-style FleetView: navigable list of main + subagents below the editor.
+  const fleet = new FleetList(manager, agentActivity);
+  let fleetViewEnabled = true;
+  function isFleetViewEnabled(): boolean { return fleetViewEnabled; }
+  function setFleetViewEnabled(b: boolean): void { fleetViewEnabled = b; fleet.setEnabled(b); }
 
   // ---- Join mode configuration ----
   let defaultJoinMode: JoinMode = 'async';
@@ -658,6 +675,7 @@ export default function (pi: ExtensionAPI) {
   // Grab UI context from first tool execution + clear lingering widget on new turn
   pi.on("tool_execution_start", async (_event, ctx) => {
     widget.setUICtx(ctx.ui as UICtx);
+    fleet.setUICtx(ctx.ui as unknown as FleetUICtx);
     widget.onTurnStart();
   });
 
@@ -678,6 +696,8 @@ export default function (pi: ExtensionAPI) {
       setAbortResendKey: (key: string) => { abortResendKey = key; },
       setWidgetDisplayMode,
       setHerdrReportWorking,
+      setFleetView: setFleetViewEnabled,
+      setWidgetMode: setWidgetMode,
     },
     (event, payload) => pi.events.emit(event, payload),
   );
@@ -1004,6 +1024,8 @@ export default function (pi: ExtensionAPI) {
         agentActivity.set(record.id, state);
         widget.ensureTimer();
         widget.update();
+        fleet.ensureTimer();
+        fleet.update();
         const resumeDetails = { displayName: getDisplayName(record.type), description: record.description, subagentType: record.type, modelName: record.invocation?.modelName };
         return textResult(
           `Agent resumed in background.\nAgent ID: ${record.id}\nType: ${resumeDetails.displayName}\nDescription: ${record.description}\n\n` +
@@ -1077,6 +1099,8 @@ export default function (pi: ExtensionAPI) {
       agentActivity.set(id, bgState);
       widget.ensureTimer();
       widget.update();
+      fleet.ensureTimer();
+      fleet.update();
 
       // Emit created event
       pi.events.emit("subagents:created", {
@@ -1849,7 +1873,7 @@ Guidelines for choosing settings:
 
 Write the file using the write tool. Only write the file, nothing else.`;
 
-    const record = await manager.spawnAndWait(pi, ctx, "general-purpose", generatePrompt, {
+    const { record } = await manager.spawnAndWait(pi, ctx, "general-purpose", generatePrompt, {
       description: `Generate ${name} agent`,
       maxTurns: 5,
       eventBus: pi.events,
@@ -1984,6 +2008,8 @@ ${systemPrompt}
       abortResendKey: abortResendKey,
       widgetDisplayMode: getWidgetDisplayMode(),
       herdrReportWorking: isHerdrReportWorkingEnabled(),
+      fleetView: isFleetViewEnabled(),
+      widgetMode: getWidgetMode(),
     };
   }
 
@@ -2052,6 +2078,20 @@ ${systemPrompt}
           description: "Report `working` to herdr (terminal agent multiplexer) while subagents run — no-op outside a herdr pane",
           currentValue: isHerdrReportWorkingEnabled() ? "on" : "off",
           values: ["on", "off"],
+        },
+        {
+          id: "fleetView",
+          label: "Fleet view",
+          description: "Claude Code-style main+subagents list below the editor (↓/← to navigate, Enter to view)",
+          currentValue: isFleetViewEnabled() ? "on" : "off",
+          values: ["on", "off"],
+        },
+        {
+          id: "widgetMode",
+          label: "Widget",
+          description: "Above-editor agent widget: all = every agent; background = hide foreground (they already render inline); off = hide the widget.",
+          currentValue: getWidgetMode(),
+          values: ["all", "background", "off"],
         },
         {
           id: "toolDescriptionMode",
@@ -2139,6 +2179,13 @@ ${systemPrompt}
       } else if (id === "widgetDisplayMode") {
         setWidgetDisplayMode(value as WidgetDisplayMode);
         notifyApplied(ctx, `Widget display set to ${value}`);
+      } else if (id === "fleetView") {
+        const enabled = value === "on";
+        setFleetViewEnabled(enabled);
+        notifyApplied(ctx, `Fleet view ${enabled ? "enabled" : "disabled"}`);
+      } else if (id === "widgetMode") {
+        setWidgetMode(value as WidgetMode);
+        notifyApplied(ctx, `Widget set to ${value}`);
       } else if (id === "waitTimeoutSeconds") {
         const n = parseInt(value, 10);
         if (n >= 30 && n <= 3600) {
