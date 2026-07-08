@@ -48,6 +48,7 @@ Upstream changes are reviewed for cherry-picking when practical; otherwise they 
 - **Cross-extension RPC** — other pi extensions can spawn and stop subagents via the `pi.events` event bus (`subagents:rpc:ping`, `subagents:rpc:spawn`, `subagents:rpc:stop`). Standardized reply envelopes with protocol versioning. Emits `subagents:ready` on load
 - **Schedule subagents** — pass `schedule` to the `Agent` tool to fire on cron / interval / one-shot. Session-scoped jobs with PID-locked persistence; results land via the same steering-style `subagent-notification` path as manual background completions; manage via `/agents → Scheduled jobs`
 - **Model scope enforcement** — opt-in validation that subagent model choices stay within your pi `enabledModels` allowlist (sourced from `/scoped-models`, with both global and project-local pi settings honored). Caller-supplied out-of-scope → hard error to orchestrator; frontmatter-pinned out-of-scope → warning + runs anyway (frontmatter authoritative). Toggle via `/agents → Settings → Scope models`
+- **Herdr `working` status** — reports the pane as `working` (custom-status `running subagents`) to [herdr](https://herdr.dev) while ≥1 subagent runs, so the terminal multiplexer's sidebar doesn't mis-classify the blocked-waiting parent as `idle`. Refcounted; no-op outside a herdr pane. Toggle via `/agents → Settings → Herdr status`
 
 ## Install
 
@@ -409,9 +410,31 @@ When on, each subagent spawn's effective model is validated against pi's own `en
 
 **No-op safety:** if `enabledModels` is missing or empty in pi's settings, scope check skips entirely — no false positives, no spurious errors.
 
+## Herdr integration
+
+[Herdr](https://herdr.dev) is a terminal agent multiplexer that shows each pane's semantic state — `working`, `blocked`, `done`, `idle` — in a sidebar so you can see which agent is busy. While subagents run, the parent pi pane is blocked-waiting (or doing light work) and looks idle, so herdr's default buffer-scraping mis-classifies it as `idle` even though the task is actively in progress. pi-subagents tells herdr exactly that.
+
+When `herdrReportWorking` is on (the default) and the process is inside a herdr-managed pane (`HERDR_ENV=1` + `HERDR_PANE_ID`), the extension runs, while ≥1 subagent is running:
+
+```bash
+herdr pane report-agent "$HERDR_PANE_ID" \
+  --source user:pi-subagents --agent pi --state working \
+  --custom-status "running subagents" --message "running subagent: <description>"
+```
+
+and, when the last running subagent reaches a terminal state:
+
+```bash
+herdr pane release-agent "$HERDR_PANE_ID" --source user:pi-subagents --agent pi
+```
+
+The report is **refcounted**: the first subagent to start reports `working`, concurrent starts update the visible message (e.g. `running 3 subagents (latest: …)`), and the last subagent to finish releases the authority. This holds for both foreground (blocking) and background/concurrent subagents, and across resume/abort paths — every `acquire` (agent → running) is paired with exactly one `release` (agent → terminal).
+
+Reports are fire-and-forget and never break the tool; outside herdr the whole feature is a no-op. Toggle it under `/agents → Settings → Herdr status`, or set `herdrReportWorking` in the [settings file](#persistent-settings). Verify from another pane with `herdr agent list` (look for `agent_status: "working"` + `custom_status: "running subagents"`).
+
 ## Persistent Settings
 
-Runtime tuning values set via `/agents` → Settings (max concurrency, default max turns, grace turns, default join mode, scheduling on/off, scope models on/off, disable defaults on/off, tool description full/compact/custom) persist across pi restarts. Two files, merged on load:
+Runtime tuning values set via `/agents` → Settings (max concurrency, default max turns, grace turns, default join mode, scheduling on/off, scope models on/off, disable defaults on/off, tool description full/compact/custom, herdr status on/off) persist across pi restarts. Two files, merged on load:
 
 - **Global:** `~/.pi/agent/subagents.json` — your machine-wide defaults. Edit by hand; the `/agents` menu never writes here.
 - **Project:** `<cwd>/.pi/subagents.json` — per-project overrides. Written by `/agents` → Settings.

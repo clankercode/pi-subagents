@@ -19,6 +19,7 @@ import { cleanupWorktree, createWorktree, pruneWorktrees, } from "./worktree.js"
 
 export type OnAgentComplete = (record: AgentRecord) => void;
 export type OnAgentStart = (record: AgentRecord) => void;
+export type OnAgentStop = (record: AgentRecord) => void;
 export type OnAgentCompact = (record: AgentRecord, info: CompactionInfo) => void;
 export type CompactionInfo = { reason: "manual" | "threshold" | "overflow"; tokensBefore: number };
 
@@ -119,6 +120,7 @@ export class AgentManager {
   private cleanupInterval: ReturnType<typeof setInterval>;
   private onComplete?: OnAgentComplete;
   private onStart?: OnAgentStart;
+  private onStop?: OnAgentStop;
   private onCompact?: OnAgentCompact;
   private maxConcurrent: number;
   /** Base repos worktrees were created from — so dispose() can prune them all,
@@ -139,9 +141,11 @@ export class AgentManager {
     maxConcurrent = DEFAULT_MAX_CONCURRENT,
     onStart?: OnAgentStart,
     onCompact?: OnAgentCompact,
+    onStop?: OnAgentStop,
   ) {
     this.onComplete = onComplete;
     this.onStart = onStart;
+    this.onStop = onStop;
     this.onCompact = onCompact;
     this.maxConcurrent = maxConcurrent;
     // Cleanup completed agents after 10 minutes (but keep sessions for resume)
@@ -336,6 +340,7 @@ export class AgentManager {
         record.completedAt ??= Date.now();
 
         detach();
+        this.onStop?.(record);
 
         // Final flush of streaming output file
         if (record.outputCleanup) {
@@ -370,6 +375,7 @@ export class AgentManager {
         record.completedAt ??= Date.now();
 
         detach();
+        this.onStop?.(record);
 
         // Final flush of streaming output file on error
         if (record.outputCleanup) {
@@ -480,6 +486,7 @@ export class AgentManager {
       record.result = responseText;
       record.completedAt = Date.now();
       detach();
+      this.onStop?.(record);
       this.completeBackground(record, true);
       return responseText;
     }).catch((err) => {
@@ -487,6 +494,7 @@ export class AgentManager {
       record.error = err instanceof Error ? err.message : String(err);
       record.completedAt = Date.now();
       detach();
+      this.onStop?.(record);
       this.completeBackground(record, true);
       return "";
     });

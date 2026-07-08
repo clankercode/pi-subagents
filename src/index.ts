@@ -30,6 +30,7 @@ import { loadCustomAgents } from "./custom-agents.js";
 import { registerDashboardModules } from "./dashboard-ui.js";
 import { isModelInScope, readEnabledModels, resolveEnabledModels } from "./enabled-models.js";
 import { GroupJoinManager } from "./group-join.js";
+import { HerdrReporter } from "./herdr.js";
 import { resolveAgentInvocationConfig, resolveJoinMode } from "./invocation-config.js";
 import { type ModelRegistry, resolveModel } from "./model-resolver.js";
 import { buildNotificationDetails, formatTaskNotification, registerSubagentNotificationRenderer } from "./notifications.js";
@@ -351,6 +352,12 @@ export default function (pi: ExtensionAPI) {
     };
   }
 
+  // herdr integration: report `working` while ≥1 subagent runs so herdr's
+  // sidebar/waits/rollups don't mis-classify the idle-looking, blocked-waiting
+  // parent pane as idle. Refcounted (first running reports, last terminal
+  // releases); no-op outside a herdr pane or when herdrReportWorking is off.
+  const reporter = new HerdrReporter({ isEnabled: isHerdrReportWorkingEnabled });
+
   // Background completion: route through group join or send individual nudge
   const manager = new AgentManager((record) => {
     // Emit lifecycle event based on terminal status
@@ -404,6 +411,9 @@ export default function (pi: ExtensionAPI) {
       toolUses: record.toolUses,
       invocation: record.invocation,
     });
+    // A subagent transitioned to running — acquire a herdr `working` hold
+    // (0→1 reports working; re-reports on each concurrent start).
+    reporter.acquire(record.description);
   }, (record, info) => {
     // Emit compacted event when agent's session compacts (preserves count on record).
     pi.events.emit("subagents:compacted", {
@@ -416,6 +426,10 @@ export default function (pi: ExtensionAPI) {
       depth: record.depth,
       parentAgentId: record.parentAgentId,
     });
+  }, (_record) => {
+    // A subagent reached a terminal state — release the herdr `working` hold
+    // (the last running agent's release restores the pane's status authority).
+    reporter.release();
   });
 
   // Expose manager via Symbol.for() global registry for cross-package access.
@@ -505,6 +519,7 @@ export default function (pi: ExtensionAPI) {
     for (const timer of pendingNudges.values()) clearTimeout(timer);
     pendingNudges.clear();
     retryStash.clear();
+    reporter.dispose();
     manager.dispose();
   });
 
@@ -552,6 +567,13 @@ export default function (pi: ExtensionAPI) {
   let scopeModelsEnabled = false;
   function isScopeModelsEnabled(): boolean { return scopeModelsEnabled; }
   function setScopeModelsEnabled(enabled: boolean): void { scopeModelsEnabled = enabled; }
+
+  // SubagentsSettings.herdrReportWorking — default true. Reports `working` to
+  // herdr while ≥1 subagent runs (no-op outside a herdr-managed pane). Toggled
+  // via the settings menu or the JSON file; reads live in the reporter.
+  let herdrReportWorkingEnabled = true;
+  function isHerdrReportWorkingEnabled(): boolean { return herdrReportWorkingEnabled; }
+  function setHerdrReportWorking(enabled: boolean): void { herdrReportWorkingEnabled = enabled; }
 
   // ---- Disable default agents configuration ----
   // When enabled, the three hardcoded default agents (general-purpose, Explore,
@@ -655,6 +677,7 @@ export default function (pi: ExtensionAPI) {
       setWaitTimeoutSeconds,
       setAbortResendKey: (key: string) => { abortResendKey = key; },
       setWidgetDisplayMode,
+      setHerdrReportWorking,
     },
     (event, payload) => pi.events.emit(event, payload),
   );
@@ -1960,6 +1983,7 @@ ${systemPrompt}
       waitTimeoutSeconds: getWaitTimeoutSeconds(),
       abortResendKey: abortResendKey,
       widgetDisplayMode: getWidgetDisplayMode(),
+      herdrReportWorking: isHerdrReportWorkingEnabled(),
     };
   }
 
@@ -2020,6 +2044,13 @@ ${systemPrompt}
           label: "Disable defaults",
           description: "Hide built-in agents (general-purpose, Explore, Plan) — custom agents are unaffected",
           currentValue: isDefaultsDisabled() ? "on" : "off",
+          values: ["on", "off"],
+        },
+        {
+          id: "herdrReportWorking",
+          label: "Herdr status",
+          description: "Report `working` to herdr (terminal agent multiplexer) while subagents run — no-op outside a herdr pane",
+          currentValue: isHerdrReportWorkingEnabled() ? "on" : "off",
           values: ["on", "off"],
         },
         {
@@ -2098,6 +2129,10 @@ ${systemPrompt}
         const enabled = value === "on";
         setDisableDefaultAgents(enabled);
         notifyApplied(ctx, `Default agents ${enabled ? "disabled" : "enabled"}. Tool spec change takes effect on next pi session.`);
+      } else if (id === "herdrReportWorking") {
+        const enabled = value === "on";
+        setHerdrReportWorking(enabled);
+        notifyApplied(ctx, `Herdr status reporting ${enabled ? "enabled" : "disabled"}.`);
       } else if (id === "toolDescriptionMode") {
         setToolDescriptionMode(value as ToolDescriptionMode);
         notifyApplied(ctx, `Tool description set to ${value}. Takes effect on next pi session.`);

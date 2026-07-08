@@ -15,6 +15,7 @@ vi.mock("../src/worktree.js", () => ({
 }));
 
 import { runAgent } from "../src/agent-runner.js";
+import { HerdrReporter } from "../src/herdr.js";
 
 const mockPi = {} as any;
 const mockCtx = { cwd: "/tmp" } as any;
@@ -815,5 +816,157 @@ describe("AgentManager — runAgent rejection leaves the record visible with err
     expect(record.status).toBe("error");
     expect(record.error).toBe("boom");
     expect(record.completedAt).toBeGreaterThan(0);
+  });
+});
+
+// --- onStop lifecycle hook + herdr acquire/release pairing --------------
+// onStop fires exactly once per agent when it leaves the running state
+// (complete / error / abort), pairing 1:1 with onStart so the herdr
+// reporter's refcount stays balanced.
+
+describe("AgentManager — onStop lifecycle hook", () => {
+  let manager: AgentManager;
+  afterEach(() => manager?.dispose());
+
+  it("fires onStop once when a background agent completes", async () => {
+    const stops: string[] = [];
+    manager = new AgentManager(undefined, undefined, undefined, undefined, (r) => stops.push(r.id));
+    resolvedRun();
+
+    const id = manager.spawn(mockPi, mockCtx, "general-purpose", "p", {
+      description: "bg",
+      isBackground: true,
+    });
+    const record = manager.getRecord(id)!;
+    await record.promise;
+
+    expect(stops).toEqual([id]);
+  });
+
+  it("fires onStop once when a foreground agent completes", async () => {
+    const stops: string[] = [];
+    manager = new AgentManager(undefined, undefined, undefined, undefined, (r) => stops.push(r.id));
+    resolvedRun();
+
+    const record = await manager.spawnAndWait(mockPi, mockCtx, "general-purpose", "p", {
+      description: "fg",
+    });
+    expect(stops).toEqual([record.id]);
+  });
+
+  it("fires onStop once when an agent errors", async () => {
+    const stops: string[] = [];
+    manager = new AgentManager(undefined, undefined, undefined, undefined, (r) => stops.push(r.id));
+    vi.mocked(runAgent).mockRejectedValue(new Error("boom"));
+
+    const id = manager.spawn(mockPi, mockCtx, "general-purpose", "p", {
+      description: "err",
+      isBackground: false,
+    });
+    await manager.getRecord(id)!.promise;
+
+    expect(stops).toEqual([id]);
+  });
+
+  it("fires onStop once when a running agent is aborted", async () => {
+    const stops: string[] = [];
+    manager = new AgentManager(undefined, undefined, undefined, undefined, (r) => stops.push(r.id));
+
+    // Keep runAgent pending so we can abort while it's genuinely "running".
+    let resolveRun!: (v: any) => void;
+    vi.mocked(runAgent).mockReturnValue(
+      new Promise((r) => {
+        resolveRun = () =>
+          r({ responseText: "done", session: mockSession(), aborted: true, steered: false });
+      }) as any,
+    );
+
+    const id = manager.spawn(mockPi, mockCtx, "general-purpose", "p", {
+      description: "aborted",
+      isBackground: true,
+    });
+    const record = manager.getRecord(id)!;
+    expect(record.status).toBe("running");
+
+    manager.abort(id); // status → stopped; promise still pending
+    resolveRun(); // let the .then fire
+    await record.promise;
+
+    expect(record.status).toBe("stopped");
+    expect(stops).toEqual([id]); // exactly one release — not doubled by abort
+  });
+});
+
+describe("AgentManager — herdr acquire/release pairing", () => {
+  let manager: AgentManager;
+  afterEach(() => manager?.dispose());
+
+  function capture() {
+    const calls: { cmd: string; args: string[] }[] = [];
+    const spawnFn = vi.fn((cmd: string, args: string[]) => {
+      calls.push({ cmd, args });
+      return { unref: vi.fn(), on: vi.fn() } as any;
+    });
+    return { spawnFn, calls };
+  }
+  const reports = (calls: { args: string[] }[]) => calls.filter((c) => c.args.includes("report-agent"));
+  const releases = (calls: { args: string[] }[]) => calls.filter((c) => c.args.includes("release-agent"));
+
+  it("onStart/onStop counts match, and the reporter reports once + releases once", async () => {
+    const { spawnFn, calls } = capture();
+    const reporter = new HerdrReporter({ env: "1", paneId: "w1:p1", spawnFn });
+    const starts: string[] = [];
+    const stops: string[] = [];
+    manager = new AgentManager(
+      undefined,
+      undefined,
+      (r) => {
+        starts.push(r.id);
+        reporter.acquire(r.description);
+      },
+      undefined,
+      (r) => {
+        stops.push(r.id);
+        reporter.release();
+      },
+    );
+    resolvedRun();
+
+    for (let i = 0; i < 3; i++) {
+      manager.spawn(mockPi, mockCtx, "general-purpose", "p", {
+        description: `agent ${i}`,
+        isBackground: true,
+      });
+    }
+    await manager.waitForAll();
+
+    // Each agent started and stopped exactly once.
+    expect(starts).toHaveLength(3);
+    expect(stops).toHaveLength(3);
+    expect(starts.sort()).toEqual(stops.sort());
+
+    // Reporter: one report per acquire (3), exactly one release-agent (last).
+    expect(reports(calls)).toHaveLength(3);
+    expect(releases(calls)).toHaveLength(1);
+  });
+
+  it("a single foreground agent reports working then releases on completion", async () => {
+    const { spawnFn, calls } = capture();
+    const reporter = new HerdrReporter({ env: "1", paneId: "w1:p1", spawnFn });
+    manager = new AgentManager(
+      undefined,
+      undefined,
+      (r) => reporter.acquire(r.description),
+      undefined,
+      () => reporter.release(),
+    );
+    resolvedRun();
+
+    await manager.spawnAndWait(mockPi, mockCtx, "general-purpose", "p", {
+      description: "solo fg",
+    });
+
+    expect(reports(calls)).toHaveLength(1);
+    expect(releases(calls)).toHaveLength(1);
   });
 });

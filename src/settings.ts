@@ -86,6 +86,17 @@ export interface SubagentsSettings {
   abortResendKey?: string;
   /** How the live subagent widget renders recursive trees. Defaults to auto. */
   widgetDisplayMode?: WidgetDisplayMode;
+  /**
+   * Report `working` to [herdr](https://herdr.dev) (terminal agent
+   * multiplexer) while at least one subagent is running, and release the
+   * status authority when the last one finishes. No-ops outside a
+   * herdr-managed pane (HERDR_ENV=1 + HERDR_PANE_ID). Defaults to `true`.
+   *
+   * Without this, herdr screen-scrapes the parent pane's buffer and can
+   * mis-classify it as `idle` while subagents do the real work in the
+   * background, so the user sees an idle-looking agent that is actually busy.
+   */
+  herdrReportWorking?: boolean;
 }
 
 export type ToolDescriptionMode = "full" | "compact" | "custom";
@@ -106,6 +117,7 @@ export interface SettingsAppliers {
   setWaitTimeoutSeconds: (seconds: number) => void;
   setAbortResendKey: (key: string) => void;
   setWidgetDisplayMode: (mode: WidgetDisplayMode) => void;
+  setHerdrReportWorking: (b: boolean) => void;
 }
 
 /** Emit callback — a subset of `pi.events.emit` to keep helpers testable. */
@@ -178,6 +190,9 @@ function sanitize(raw: unknown): SubagentsSettings {
   if (typeof r.widgetDisplayMode === "string" && VALID_WIDGET_DISPLAY_MODES.has(r.widgetDisplayMode)) {
     out.widgetDisplayMode = r.widgetDisplayMode as WidgetDisplayMode;
   }
+  if (typeof r.herdrReportWorking === "boolean") {
+    out.herdrReportWorking = r.herdrReportWorking;
+  }
   return out;
 }
 
@@ -239,6 +254,7 @@ export function applySettings(s: SubagentsSettings, appliers: SettingsAppliers):
   if (typeof s.waitTimeoutSeconds === "number") appliers.setWaitTimeoutSeconds(s.waitTimeoutSeconds);
   if (typeof s.abortResendKey === "string") appliers.setAbortResendKey(s.abortResendKey);
   if (s.widgetDisplayMode) appliers.setWidgetDisplayMode(s.widgetDisplayMode);
+  if (typeof s.herdrReportWorking === "boolean") appliers.setHerdrReportWorking(s.herdrReportWorking);
 }
 
 /**

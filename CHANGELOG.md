@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Herdr `working` status** — when inside a [herdr](https://herdr.dev)-managed pane and the new `herdrReportWorking` setting is on (default `true`), the extension reports the pane as `working` (custom-status `running subagents`) for the duration that ≥1 subagent is running, and releases the status authority when the last one finishes. Without this, herdr screen-scrapes the parent pane's buffer and mis-classifies the blocked-waiting parent as `idle` while subagents do the real work. Refcounted across foreground/background/concurrent/resume/abort paths. No-op outside herdr. Toggle via `/agents → Settings → Herdr status`.
+
 ## [0.11.1] - 2026-06-28
 
 ### Fixed
