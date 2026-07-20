@@ -114,6 +114,17 @@ export interface SubagentsSettings {
    * widget).
    */
   widgetMode?: WidgetMode;
+  /**
+   * Project/global default for writing each subagent's `.output` transcript
+   * (a JSON-lines copy of the run, stored under the OS temp dir).
+   * Defaults to `true`. Set `false` to make transcripts opt-in for the whole
+   * project (e.g. a repo that shouldn't leave run transcripts on disk for backup
+   * or DLP tooling to ingest). A custom agent's `output_transcript` frontmatter
+   * overrides this per agent. This governs only the transcript — it does NOT
+   * affect the persisted pi session (`persist_session`), worktree commits
+   * (`isolation: worktree`), or memory files.
+   */
+  outputTranscript?: boolean;
 }
 
 export type ToolDescriptionMode = "full" | "compact" | "custom";
@@ -137,6 +148,7 @@ export interface SettingsAppliers {
   setHerdrReportWorking: (b: boolean) => void;
   setFleetView: (b: boolean) => void;
   setWidgetMode: (mode: WidgetMode) => void;
+  setOutputTranscript: (b: boolean) => void;
 }
 
 /** Emit callback — a subset of `pi.events.emit` to keep helpers testable. */
@@ -219,6 +231,9 @@ function sanitize(raw: unknown): SubagentsSettings {
   if (typeof r.widgetMode === "string" && VALID_WIDGET_MODES.has(r.widgetMode)) {
     out.widgetMode = r.widgetMode as WidgetMode;
   }
+  if (typeof r.outputTranscript === "boolean") {
+    out.outputTranscript = r.outputTranscript;
+  }
   return out;
 }
 
@@ -283,6 +298,7 @@ export function applySettings(s: SubagentsSettings, appliers: SettingsAppliers):
   if (typeof s.herdrReportWorking === "boolean") appliers.setHerdrReportWorking(s.herdrReportWorking);
   if (typeof s.fleetView === "boolean") appliers.setFleetView(s.fleetView);
   if (s.widgetMode) appliers.setWidgetMode(s.widgetMode);
+  if (typeof s.outputTranscript === "boolean") appliers.setOutputTranscript(s.outputTranscript);
 }
 
 /**

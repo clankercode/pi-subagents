@@ -1,7 +1,7 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import subagentsExtension, { createActivityTracker } from "../src/index.js";
-import { AgentWidget, describeActivityWithAge, formatMs, formatSessionTokens, formatSubagentStatusText } from "../src/ui/agent-widget.js";
+import { AgentWidget, describeActivityWithAge, fgPreservingNestedStyles, formatMs, formatSessionTokens, formatSubagentStatusText } from "../src/ui/agent-widget.js";
 import { buildAgentTree, renderAgentTree, type WidgetAgentSnapshot } from "../src/ui/agent-widget-tree.js";
 
 const plainTheme = { fg: (_c: string, s: string) => s, bold: (s: string) => s };
@@ -335,6 +335,13 @@ describe("AgentWidget recursive rendering", () => {
 
 describe("formatSessionTokens", () => {
   const theme = { fg: (c: string, s: string) => `<${c}>${s}</${c}>`, bold: (s: string) => s };
+  const ansiTheme = {
+    fg: (c: string, s: string) => {
+      const codes: Record<string, string> = { dim: "2", warning: "33", accent: "35", error: "31" };
+      return `\u001b[${codes[c] ?? "31"}m${s}\u001b[39m`;
+    },
+    bold: (s: string) => s,
+  };
 
   it("applies threshold colors (<70 dim, 70–85 warning, ≥85 error)", () => {
     expect(formatSessionTokens(1234, null, theme)).toBe("1.2k token");
@@ -354,6 +361,14 @@ describe("formatSessionTokens", () => {
     expect(formatSessionTokens(1234, 88, theme, 4)).toBe("1.2k token (<error>88%</error> · <dim>⇊4</dim>)");
     // compactions=0 omitted
     expect(formatSessionTokens(1234, 45, theme, 0)).toBe("1.2k token (<dim>45%</dim>)");
+  });
+
+  it("preserves the outer style after nested annotation styles reset", () => {
+    const tokenText = formatSessionTokens(1234, 70, ansiTheme);
+
+    expect(fgPreservingNestedStyles(ansiTheme, "accent", tokenText)).toBe(
+      "\u001b[35m1.2k token (\u001b[33m70%\u001b[39m\u001b[35m)\u001b[39m",
+    );
   });
 });
 

@@ -468,7 +468,7 @@ describe("AgentManager — lifetime usage + compaction count are eagerly initial
     vi.mocked(resumeMock).mockImplementation(async (_session, _prompt, opts: any) => {
       opts.onAssistantUsage?.({ input: 70, output: 30, cacheWrite: 5 });
       opts.onCompaction?.({ reason: "overflow", tokensBefore: 999 });
-      return "second";
+      return { text: "second" };
     });
 
     await manager.resume(id, "more");

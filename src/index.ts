@@ -48,6 +48,7 @@ import {
   AgentWidget,
   buildInvocationTags,
   describeActivity,
+  fgPreservingNestedStyles,
   formatContextWindow,
   formatDuration,
   getDisplayName,
@@ -138,6 +139,25 @@ export function createActivityTracker(maxTurns?: number, onStreamUpdate?: () => 
 
   return { state, callbacks };
 }
+
+/**
+ * Salvaged partial output of a failed run, as a labeled suffix for the error
+ * surfaces (or "" if the run produced nothing). `record.result` is bounded to
+ * the run's own turns, so this is never a stale earlier answer (#144).
+ */
+function partialOutputSuffix(record: AgentRecord): string {
+  const partial = record.result?.trim();
+  return partial ? `\n\nPartial output before the failure:\n${partial}` : "";
+}
+
+/**
+ * Advertised thinking levels, ordered to mirror pi-ai's EXTENDED_THINKING_LEVELS
+ * (`off` + every `ThinkingLevel`). Single source for the Agent tool description,
+ * the generated-agent template, and the `/agents` wizard so these lists can't
+ * drift behind pi again (#147). Availability of any level still depends on the
+ * host pi version and the selected model — pi clamps unsupported levels down.
+ */
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 export default function (pi: ExtensionAPI) {
   const extensionDepth = getCurrentExtensionDepth();
@@ -437,14 +457,25 @@ export default function (pi: ExtensionAPI) {
 
   // Expose manager via Symbol.for() global registry for cross-package access.
   // Standard Node.js pattern for cross-package singletons (used by OpenTelemetry, etc.).
+  //
+  // Claim the slot only if it's free: subagent sessions re-activate this
+  // extension in the same process (session.bindExtensions in agent-runner.ts),
+  // and unconditionally overwriting would point the registry at a short-lived
+  // child manager — and the child's shutdown would then delete the root
+  // session's entry. The first activation (the root session) wins; child
+  // activations leave it alone.
   const MANAGER_KEY = Symbol.for("pi-subagents:manager");
-  (globalThis as any)[MANAGER_KEY] = {
+  const registryEntry = {
     waitForAll: () => manager.waitForAll(),
     hasRunning: () => manager.hasRunning(),
     spawn: (piRef: any, ctx: any, type: string, prompt: string, options: any) =>
       manager.spawn(piRef, ctx, type, prompt, options),
     getRecord: (id: string) => manager.getRecord(id),
   };
+  const ownsManagerRegistry = (globalThis as any)[MANAGER_KEY] === undefined;
+  if (ownsManagerRegistry) {
+    (globalThis as any)[MANAGER_KEY] = registryEntry;
+  }
 
   // --- Cross-extension RPC via pi.events ---
   let currentCtx: ExtensionContext | undefined;
@@ -470,6 +501,15 @@ export default function (pi: ExtensionAPI) {
     }
   }
 
+  // RPC + readiness are gated on session_start (#142): pi runs every extension
+  // factory before applying an agent's `extensions:` filter, and only delivers
+  // lifecycle events to the survivors — but the shared pi.events bus still
+  // reaches filtered-out activations. Registering RPC / emitting ready at
+  // factory time would advertise a spawn service those sessions can't provide
+  // (currentCtx never gets set). Deferred wiring also closes a race where a
+  // consumer whose factory ran after ours would miss the ready event.
+  let rpcHandle: ReturnType<typeof registerRpcHandlers> | undefined;
+
   // Capture ctx from session_start for RPC spawn handler + start the scheduler.
   pi.on("session_start", async (_event, ctx) => {
     currentCtx = ctx;
@@ -479,6 +519,20 @@ export default function (pi: ExtensionAPI) {
     widget.clearSnapshots();
     retryStash.clear();
     if (isSchedulingEnabled() && !scheduler.isActive()) startScheduler(ctx);
+    // Wire RPC once, on the first bound session_start. Subsequent session_starts
+    // (e.g. /new within the same activation) reuse the same handlers; currentCtx
+    // already tracks the live session.
+    if (!rpcHandle) {
+      rpcHandle = registerRpcHandlers({
+        events: pi.events,
+        pi,
+        getCtx: () => currentCtx,
+        manager,
+        depth: nextSubagentDepth,
+        parentAgentId: extensionAgentId,
+      });
+      pi.events.emit("subagents:ready", {});
+    }
   });
 
   pi.on("session_before_switch", () => {
@@ -490,30 +544,23 @@ export default function (pi: ExtensionAPI) {
     scheduler.stop();
   });
 
-  const { unsubPing: unsubPingRpc, unsubSpawn: unsubSpawnRpc, unsubStop: unsubStopRpc } = registerRpcHandlers({
-    events: pi.events,
-    pi,
-    getCtx: () => currentCtx,
-    manager,
-    depth: nextSubagentDepth,
-    parentAgentId: extensionAgentId,
-  });
-
-  // Broadcast readiness so extensions loaded after us can discover us
-  pi.events.emit("subagents:ready", {});
-
   // On shutdown, abort all agents immediately and clean up.
   // If the session is going down, there's nothing left to consume agent results.
   pi.on("session_shutdown", async () => {
-    unsubSpawnRpc();
-    unsubStopRpc();
-    unsubPingRpc();
+    rpcHandle?.unsubSpawn();
+    rpcHandle?.unsubStop();
+    rpcHandle?.unsubPing();
+    rpcHandle = undefined;
     unsubWidgetCreated?.();
     unsubWidgetStarted?.();
     unsubWidgetCompleted?.();
     unsubWidgetFailed?.();
     currentCtx = undefined;
-    delete (globalThis as any)[MANAGER_KEY];
+    // Only release the global slot if this activation claimed it — a child
+    // session's shutdown must not delete the root session's registry entry.
+    if (ownsManagerRegistry && (globalThis as any)[MANAGER_KEY] === registryEntry) {
+      delete (globalThis as any)[MANAGER_KEY];
+    }
     scheduler.stop();
     clearBatchState();
     groupJoin.dispose();
@@ -558,6 +605,13 @@ export default function (pi: ExtensionAPI) {
   let fleetViewEnabled = true;
   function isFleetViewEnabled(): boolean { return fleetViewEnabled; }
   function setFleetViewEnabled(b: boolean): void { fleetViewEnabled = b; fleet.setEnabled(b); }
+
+  // Project/global default for writing the subagent .output transcript. A custom
+  // agent's `output_transcript` frontmatter overrides this per spawn; when the
+  // frontmatter is silent, this default applies. Read live at spawn time.
+  let outputTranscriptDefault = true;
+  function getOutputTranscriptDefault(): boolean { return outputTranscriptDefault; }
+  function setOutputTranscript(b: boolean): void { outputTranscriptDefault = b; }
 
   // ---- Join mode configuration ----
   let defaultJoinMode: JoinMode = 'async';
@@ -698,6 +752,7 @@ export default function (pi: ExtensionAPI) {
       setHerdrReportWorking,
       setFleetView: setFleetViewEnabled,
       setWidgetMode: setWidgetMode,
+      setOutputTranscript: setOutputTranscript,
     },
     (event, payload) => pi.events.emit(event, payload),
   );
@@ -765,7 +820,7 @@ export default function (pi: ExtensionAPI) {
       ),
       thinking: Type.Optional(
         Type.String({
-          description: "Thinking level: off, minimal, low, medium, high, xhigh. Overrides agent default.",
+          description: `Thinking level: ${THINKING_LEVELS.join(", ")}. Overrides agent default.`,
         }),
       ),
       max_turns: Type.Optional(
@@ -1037,6 +1092,11 @@ export default function (pi: ExtensionAPI) {
       // Background execution
       const { state: bgState, callbacks: bgCallbacks } = createActivityTracker(effectiveMaxTurns);
 
+      // Whether this spawn writes its .output transcript. Per-agent
+      // frontmatter (`output_transcript`) wins; otherwise the project/global
+      // default applies. Downstream consumers key off record.outputFile.
+      const outputTranscript = customConfig?.outputTranscript ?? getOutputTranscriptDefault();
+
       // Wrap onSessionCreated to wire output file streaming.
       // The callback lazily reads record.outputFile (set right after spawn)
       // rather than closing over a value that doesn't exist yet.
@@ -1064,8 +1124,12 @@ export default function (pi: ExtensionAPI) {
           depth: nextSubagentDepth,
           parentAgentId: extensionAgentId,
           eventBus: pi.events,
-          outputFileForAgent: (agentId) => createOutputFilePath(ctx.cwd, agentId, ctx.sessionManager.getSessionId()),
-          onOutputFileCreated: (outputFile, agentId) => writeInitialEntry(outputFile, agentId, P.prompt!, ctx.cwd),
+          ...(outputTranscript
+            ? {
+                outputFileForAgent: (agentId: string) => createOutputFilePath(ctx.cwd, agentId, ctx.sessionManager.getSessionId()),
+                onOutputFileCreated: (outputFile: string, agentId: string) => writeInitialEntry(outputFile, agentId, P.prompt!, ctx.cwd),
+              }
+            : {}),
           ...bgCallbacks,
         });
       } catch (err) {
@@ -1177,7 +1241,7 @@ export default function (pi: ExtensionAPI) {
         if (details.tokens) parts.push(details.tokens);
         if (details.contextPercent !== null) parts.push(`ctx ${Math.round(details.contextPercent)}%`);
         if (details.duration) parts.push(details.duration);
-        const stats = parts.map(p => theme.fg("dim", p)).join(" " + theme.fg("dim", "·") + " ");
+        const stats = parts.map(p => fgPreservingNestedStyles(theme, "dim", p)).join(" " + theme.fg("dim", "·") + " ");
 
         line = `${icon} ${theme.bold(details.description)} ${theme.fg("dim", details.status)}`;
         if (stats) line += "\n  " + stats;
@@ -1279,8 +1343,9 @@ export default function (pi: ExtensionAPI) {
         // The wait returned while the agent was still running (timeout or abort).
         output += waitTimeoutMessage(waitOutcome, getWaitTimeoutSeconds());
       } else if (record.status === "error") {
+        // Error headline + any partial output the run produced before failing (#144).
         const limited = limitText(record.error ?? "unknown", MAX_RESULT_CHARS);
-        output += `Error: ${limited.text}`;
+        output += `Error: ${limited.text}${partialOutputSuffix(record)}`;
         if (limited.truncated) {
           output += `\n\n---\nError truncated: omitted ${limited.omittedChars} chars. Inspect the output file for the full error when available.${formatOutputFileHint(record.outputFile)}`;
         }
@@ -1847,13 +1912,14 @@ The file format is a markdown file with YAML frontmatter and a system prompt bod
 description: <one-line description shown in UI>
 tools: <comma-separated built-in tools: read, bash, edit, write, grep, find, ls. Use "none" for no tools. Omit for all tools>
 model: <optional model as "provider/modelId", e.g. "anthropic/claude-haiku-4-5-20251001". Omit to inherit parent model>
-thinking: <optional thinking level: off, minimal, low, medium, high, xhigh. Omit to inherit>
+thinking: <optional thinking level: ${THINKING_LEVELS.join(", ")}. Omit to inherit>
 max_turns: <optional max agentic turns. 0 or omit for unlimited (default)>
 prompt_mode: <"replace" (body IS the full system prompt) or "append" (body is appended to default prompt). Default: replace>
 extensions: <true (inherit all MCP/extension tools), false (none), or comma-separated names. Default: true>
 skills: <true (inherit all), false (none), or comma-separated skill names to preload into prompt. Default: true>
 disallowed_tools: <comma-separated tool names to block, even if otherwise available. Omit for none>
 inherit_context: <true to fork parent conversation into agent so it sees chat history. Recommended for tasks needing current context. Default: false>
+output_transcript: <true|false — write this agent's .output transcript under the OS temp dir. Default: true (or the project outputTranscript setting). Independent of persist_session>
 isolated: <true for no extension/MCP tools, only built-in tools. Default: false>
 memory: <"user" (global), "project" (per-project), or "local" (gitignored per-project) for persistent memory. Omit for none>
 isolation: <"worktree" to run in isolated git worktree. Omit for normal>
@@ -1946,18 +2012,10 @@ Write the file using the write tool. Only write the file, nothing else.`;
       if (customModel) modelLine = `\nmodel: ${customModel}`;
     }
 
-    // 5. Thinking
+    // 5. Thinking — "inherit" is a UI-only pseudo-choice (omit the field); the rest mirror pi.
     const thinkingChoice = await menuSelect(ctx, {
       title: "Thinking level",
-      options: [
-        "inherit",
-        "off",
-        "minimal",
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-      ],
+      options: ["inherit", ...THINKING_LEVELS],
     });
     if (!thinkingChoice) return;
 
@@ -2010,6 +2068,7 @@ ${systemPrompt}
       herdrReportWorking: isHerdrReportWorkingEnabled(),
       fleetView: isFleetViewEnabled(),
       widgetMode: getWidgetMode(),
+      outputTranscript: getOutputTranscriptDefault(),
     };
   }
 
@@ -2070,6 +2129,13 @@ ${systemPrompt}
           label: "Disable defaults",
           description: "Hide built-in agents (general-purpose, Explore, Plan) — custom agents are unaffected",
           currentValue: isDefaultsDisabled() ? "on" : "off",
+          values: ["on", "off"],
+        },
+        {
+          id: "outputTranscript",
+          label: "Output transcript",
+          description: "Write each subagent's .output transcript by default. A custom agent's output_transcript frontmatter overrides this.",
+          currentValue: getOutputTranscriptDefault() ? "on" : "off",
           values: ["on", "off"],
         },
         {
@@ -2169,6 +2235,10 @@ ${systemPrompt}
         const enabled = value === "on";
         setDisableDefaultAgents(enabled);
         notifyApplied(ctx, `Default agents ${enabled ? "disabled" : "enabled"}. Tool spec change takes effect on next pi session.`);
+      } else if (id === "outputTranscript") {
+        const enabled = value === "on";
+        setOutputTranscript(enabled);
+        notifyApplied(ctx, `Output transcript ${enabled ? "enabled" : "disabled"} by default`);
       } else if (id === "herdrReportWorking") {
         const enabled = value === "on";
         setHerdrReportWorking(enabled);

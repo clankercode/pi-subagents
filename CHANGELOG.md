@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-07-21
+
+Reimplements selected upstream [tintinweb/pi-subagents](https://github.com/tintinweb/pi-subagents) v0.14.x fixes and polish without merging upstream. Fork-specific behavior (always-background agents, herdr, dashboard, recursive widget, wait path) is preserved. Peer range stays `>=0.74.0` (no forced pi 0.80 bump).
+
+### Added
+- **`.agents/agents/` custom agent discovery** (upstream #133) — project agents are also loaded from the shared cross-tool `.agents/agents/*.md` workspace; `.pi/agents` still wins on name clash and remains where `/agents` writes.
+- **`max` thinking level advertised** (upstream #147) — tool description, generate template, and `/agents` wizard share one `THINKING_LEVELS` list including pi 0.80's `max`.
+- **`output_transcript` frontmatter + `outputTranscript` setting** (upstream #146) — opt out of writing a subagent's `.output` transcript (per-agent or project default). Toggle via `/agents → Settings → Output transcript`.
+
+### Fixed
+- **Manager registry no longer clobbered by child activations** (upstream #128) — first activation claims `Symbol.for("pi-subagents:manager")`; child sessions leave it alone and don't delete it on shutdown.
+- **Failed final turns report as `error`** (upstream #144) — provider `stopReason: "error"` and empty `length` stops are no longer silent empty successes; partial output is salvaged under a labeled suffix.
+- **Output-file streaming survives compaction** (upstream #145) — re-anchor the write index after successful compaction so long runs keep streaming.
+- **RPC + `subagents:ready` gated on `session_start`** (upstream #142) — filtered-out activations no longer advertise a broken spawn service.
+- **FleetView doesn't steal keys from dialogs** (upstream #123) — only consume input when pi's prompt editor has focus.
+- **Nested ANSI style bleed** (upstream #136) and **conversation row exact-width** (upstream #153) — dim stats keep outer style after context-% colors; bordered rows pad correctly at wide-glyph boundaries.
+- **Isolated agents keep parent model providers on pi 0.80.8+** (upstream #152) — forward `modelRuntime` when available alongside `modelRegistry`.
+
 ## [0.13.0] - 2026-07-08
 
 This release merges upstream ([tintinweb/pi-subagents](https://github.com/tintinweb/pi-subagents)) through v0.13.0 — adopting FleetView, `persist_session`, foreground lifecycle symmetry, forgiving model resolution, and more — while preserving every fork feature (herdr, dashboard UI, event-forwarding, recursive widget tree, c2c, scheduling, retry handles, abort-resend, wait timeout, tool-description mode, custom agents).

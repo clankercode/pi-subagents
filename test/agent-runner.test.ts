@@ -237,7 +237,8 @@ describe("agent-runner final output capture", () => {
 
     const result = await resumeAgent(session as any, "Continue");
 
-    expect(result).toBe("RESUMED");
+    expect(result.text).toBe("RESUMED");
+    expect(result.failure).toBeUndefined();
   });
 
   it("sets the agent name as session name before binding extensions", async () => {
@@ -259,6 +260,170 @@ describe("agent-runner final output capture", () => {
     await runAgent(ctx, "Explore", "go", { pi, agentId: "a1b2c3d4e5f6" });
 
     expect(session.setSessionName).toHaveBeenCalledWith("Explore#a1b2c3d4");
+  });
+});
+
+// #144 — a failed FINAL assistant turn (stopReason "error") must surface as
+// `failure`; how the turn STOPPED decides, never whether it produced text.
+describe("agent-runner failed-final-turn detection (#144)", () => {
+  /** Session whose prompt() appends the given messages to history. */
+  function sessionEnding(...messages: any[]) {
+    const { session } = createSession("");
+    session.prompt = vi.fn(async () => {
+      session.messages.push(...messages);
+    }) as any;
+    return session;
+  }
+
+  const errorFinal = {
+    role: "assistant",
+    content: [],
+    stopReason: "error",
+    errorMessage: "retries exhausted: 529 overloaded",
+  };
+
+  it("flags a run whose final turn is an empty provider error", async () => {
+    const session = sessionEnding(errorFinal);
+    createAgentSession.mockResolvedValue({ session });
+
+    const result = await runAgent(ctx, "Explore", "go", { pi });
+
+    expect(result.failure).toBe("retries exhausted: 529 overloaded");
+  });
+
+  it("flags the failure even when an EARLIER turn produced text (no masking)", async () => {
+    const session = sessionEnding(
+      { role: "assistant", content: [{ type: "text", text: "partial progress" }] },
+      { role: "toolResult", content: [] },
+      errorFinal,
+    );
+    createAgentSession.mockResolvedValue({ session });
+
+    const result = await runAgent(ctx, "Explore", "go", { pi });
+
+    expect(result.failure).toBe("retries exhausted: 529 overloaded");
+    // The earlier text stays available as context — status honesty, not data loss.
+    expect(result.responseText).toBe("partial progress");
+  });
+
+  it("flags a provider error that left partial text in the SAME final message", async () => {
+    const session = sessionEnding({
+      role: "assistant",
+      content: [{ type: "text", text: "truncated answ" }],
+      stopReason: "error",
+      errorMessage: "stream ended before message_stop",
+    });
+    createAgentSession.mockResolvedValue({ session });
+
+    const result = await runAgent(ctx, "Explore", "go", { pi });
+
+    expect(result.failure).toBe("stream ended before message_stop");
+    expect(result.responseText).toBe("truncated answ");
+  });
+
+  it("flags a run whose final turn hit the token limit with no text (#144 residual)", async () => {
+    // stopReason "length" with empty content is a silent max-token death — it
+    // reproduces the #144 "completed with No output." symptom, so it must fail.
+    const session = sessionEnding({ role: "assistant", content: [], stopReason: "length" });
+    createAgentSession.mockResolvedValue({ session });
+
+    const result = await runAgent(ctx, "Explore", "go", { pi });
+
+    expect(result.failure).toBe("run hit the output token limit before producing any text");
+  });
+
+  it("does NOT flag a length stop that produced text (truncated answer completes)", async () => {
+    const session = sessionEnding({
+      role: "assistant",
+      content: [{ type: "text", text: "truncated but useful answer" }],
+      stopReason: "length",
+    });
+    createAgentSession.mockResolvedValue({ session });
+
+    const result = await runAgent(ctx, "Explore", "go", { pi });
+
+    expect(result.failure).toBeUndefined();
+    expect(result.responseText).toBe("truncated but useful answer");
+  });
+
+  it("does NOT flag an empty final turn that stopped cleanly (no false failures)", async () => {
+    const session = sessionEnding(
+      { role: "assistant", content: [{ type: "text", text: "did the work" }] },
+      { role: "toolResult", content: [] },
+      { role: "assistant", content: [], stopReason: "stop" },
+    );
+    createAgentSession.mockResolvedValue({ session });
+
+    const result = await runAgent(ctx, "Explore", "go", { pi });
+
+    expect(result.failure).toBeUndefined();
+    expect(result.responseText).toBe("did the work"); // walk-back fallback preserved
+  });
+
+  it("resumeAgent applies the same rule", async () => {
+    const { session } = createSession("");
+    session.prompt = vi.fn(async () => {
+      session.messages.push(errorFinal);
+    }) as any;
+
+    const result = await resumeAgent(session as any, "Continue");
+
+    expect(result.failure).toBe("retries exhausted: 529 overloaded");
+  });
+
+  it("resume whose new turn fails empty does NOT return the previous turn's answer (#144)", async () => {
+    // The session already carries a completed prior turn; the resume prompt then
+    // fails empty. The walk-back must be bounded to this resume — result "".
+    const { session } = createSession("");
+    session.messages.push(
+      { role: "user", content: "first question" },
+      { role: "assistant", content: [{ type: "text", text: "PREVIOUS ANSWER" }], stopReason: "stop" },
+    );
+    session.prompt = vi.fn(async () => {
+      session.messages.push({ role: "user", content: "follow-up" }, errorFinal);
+    }) as any;
+
+    const result = await resumeAgent(session as any, "follow-up");
+
+    expect(result.failure).toBe("retries exhausted: 529 overloaded");
+    expect(result.text).toBe(""); // NOT "PREVIOUS ANSWER"
+  });
+
+  it("resume that produces partial text before failing returns only THIS resume's text", async () => {
+    const { session } = createSession("");
+    session.messages.push(
+      { role: "assistant", content: [{ type: "text", text: "PREVIOUS ANSWER" }], stopReason: "stop" },
+    );
+    session.prompt = vi.fn(async () => {
+      session.messages.push(
+        { role: "assistant", content: [{ type: "text", text: "new partial" }] },
+        { role: "toolResult", content: [] },
+        errorFinal,
+      );
+    }) as any;
+
+    const result = await resumeAgent(session as any, "go");
+
+    expect(result.failure).toBe("retries exhausted: 529 overloaded");
+    expect(result.text).toBe("new partial"); // this resume's progress, not the prior answer
+  });
+
+  it("collector: a toolResult/user message_start no longer wipes collected assistant text", async () => {
+    const { session, listeners } = createSession("");
+    createAgentSession.mockResolvedValue({ session });
+    session.prompt = vi.fn(async () => {
+      for (const l of listeners) {
+        l({ type: "message_start", message: { role: "assistant" } });
+        l({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "STREAMED" } });
+        // pi emits message_start for tool results and queued user messages too.
+        l({ type: "message_start", message: { role: "toolResult" } });
+        l({ type: "message_start", message: { role: "user" } });
+      }
+    }) as any;
+
+    const result = await runAgent(ctx, "Explore", "go", { pi });
+
+    expect(result.responseText).toBe("STREAMED");
   });
 });
 

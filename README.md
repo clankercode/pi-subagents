@@ -169,14 +169,15 @@ Default agents can be **ejected** (`/agents` → select agent → Eject) to expo
 
 Define custom agent types by creating `.md` files. The filename becomes the agent type name. Any name is allowed — using a default agent's name overrides it.
 
-Agents are discovered from two locations (higher priority wins):
+Agents are discovered from three locations (higher priority wins):
 
 | Priority | Location | Scope |
 |----------|----------|-------|
-| 1 (highest) | `.pi/agents/<name>.md` | Project — per-repo agents |
-| 2 | `$PI_CODING_AGENT_DIR/agents/<name>.md` (default `~/.pi/agent/agents/<name>.md`) | Global — available everywhere |
+| 1 (highest) | `.pi/agents/<name>.md` | Project — authoritative; also where `/agents` writes |
+| 2 | `.agents/agents/<name>.md` | Project — shared cross-tool [Agent Skills](https://agentskills.io)-style workspace (read-only discovery) |
+| 3 | `$PI_CODING_AGENT_DIR/agents/<name>.md` (default `~/.pi/agent/agents/<name>.md`) | Global — available everywhere |
 
-Project-level agents override global ones with the same name, so you can customize a global agent for a specific project. The global location follows the upstream `PI_CODING_AGENT_DIR` env var — set it to relocate all pi-coding-agent state (agents, skills, settings) to a custom directory.
+Higher-priority agents override lower ones with the same name. On a project name clash, `.pi/agents` wins over `.agents/agents`. The global location follows the upstream `PI_CODING_AGENT_DIR` env var — set it to relocate all pi-coding-agent state (agents, skills, settings) to a custom directory.
 
 ### Example: `.pi/agents/auditor.md`
 
@@ -220,10 +221,13 @@ All fields are optional — sensible defaults for everything.
 | `disallowed_tools` | — | Comma-separated tools to deny even if extensions provide them |
 | `isolation` | — | Set to `worktree` to run in an isolated git worktree |
 | `model` | inherit parent | Model — `provider/modelId` or fuzzy name (`"haiku"`, `"sonnet"`) |
-| `thinking` | inherit | off, minimal, low, medium, high, xhigh |
+| `thinking` | inherit | off, minimal, low, medium, high, xhigh, max (availability depends on host pi + model) |
 | `max_turns` | unlimited | Max agentic turns before graceful shutdown. `0` or omit for unlimited |
 | `prompt_mode` | `replace` | `replace`: body is the full system prompt (no AGENTS.md / CLAUDE.md inheritance). `append`: body appended to parent's prompt (agent acts as a "parent twin" — inherits parent's AGENTS.md / CLAUDE.md) |
 | `inherit_context` | `false` | Fork parent conversation into agent |
+| `persist_session` | `false` | Persist the subagent as a normal pi session (inspectable/resumable) instead of in-memory only |
+| `session_dir` | pi default | Optional session directory when `persist_session: true` |
+| `output_transcript` | project default (`true`) | `false` to skip writing this agent's `.output` transcript under the OS temp dir. Overrides the project `outputTranscript` setting. Does **not** affect `persist_session`, worktree commits, or memory files |
 | `isolated` | `false` | Hermetic specialist mode: forces `extensions: false` + `skills: false` + drops `ext:` selectors. Only built-in tools. Distinct from `isolation: worktree` (filesystem) |
 | `enabled` | `true` | Set to `false` to disable an agent (useful for hiding a default agent per-project) |
 
@@ -277,7 +281,7 @@ Launch a sub-agent.
 | `description` | string | yes | Short 3-5 word summary (shown in UI) |
 | `subagent_type` | string | no | Agent type (built-in or custom). Defaults to `general-purpose` |
 | `model` | string | no | Model — `provider/modelId` or fuzzy name (`"haiku"`, `"sonnet"`) |
-| `thinking` | string | no | Thinking level: off, minimal, low, medium, high, xhigh |
+| `thinking` | string | no | Thinking level: off, minimal, low, medium, high, xhigh, max |
 | `max_turns` | number | no | Max agentic turns. Omit for unlimited (default) |
 | `resume` | string | no | Agent ID to resume a previous session |
 | `isolated` | boolean | no | No extension/MCP tools |
@@ -436,14 +440,16 @@ Reports are fire-and-forget and never break the tool; outside herdr the whole fe
 
 ## Persistent Settings
 
-Runtime tuning values set via `/agents` → Settings (max concurrency, default max turns, grace turns, default join mode, scheduling on/off, scope models on/off, disable defaults on/off, tool description full/compact/custom, herdr status on/off) persist across pi restarts. Two files, merged on load:
+Runtime tuning values set via `/agents` → Settings (max concurrency, default max turns, grace turns, default join mode, scheduling on/off, scope models on/off, disable defaults on/off, output transcript on/off, tool description full/compact/custom, herdr status on/off, fleet view, widget mode, …) persist across pi restarts. Two files, merged on load:
 
 - **Global:** `~/.pi/agent/subagents.json` — your machine-wide defaults. Edit by hand; the `/agents` menu never writes here.
 - **Project:** `<cwd>/.pi/subagents.json` — per-project overrides. Written by `/agents` → Settings.
 
 **Precedence:** project overrides global on any field present in both. Missing fields fall back to the hardcoded defaults (max concurrency `4`, default max turns unlimited, grace turns `5`, join mode `async`, defaults enabled).
 
-**Disable defaults** (`disableDefaultAgents`, default `false`): when on, the three built-in agents (general-purpose, Explore, Plan) are not registered — only your `.pi/agents/*.md` agents are advertised and spawnable. User-defined agents are unaffected, including ones that override a default by name. The Agent tool's type list updates on the next pi session (the tool schema is registered at startup).
+**Disable defaults** (`disableDefaultAgents`, default `false`): when on, the three built-in agents (general-purpose, Explore, Plan) are not registered — only your project/global custom agents (`.pi/agents/`, `.agents/agents/`, and the global agents dir) are advertised and spawnable. User-defined agents are unaffected, including ones that override a default by name. The Agent tool's type list updates on the next pi session (the tool schema is registered at startup).
+
+**Output transcript** (`outputTranscript`, default `true`): whether each subagent writes its JSON-lines `.output` transcript under the OS temp dir (`<tmpdir>/pi-subagents-<uid>/…/<agent-id>.output`). Set `false` to make transcripts opt-in for the project (e.g. DLP / backup tooling). A custom agent's `output_transcript` frontmatter overrides this per agent (frontmatter wins). Scope is narrow: it only gates the `.output` file — not `persist_session`, worktree commits, or memory files. Toggle via `/agents → Settings → Output transcript`.
 
 **Tool description** (`toolDescriptionMode`, default `"full"`): which Agent tool description the LLM sees. `"full"` is the rich Claude Code-style prompt (~1,400 tokens with the default agents); `"compact"` is ~75% smaller — one-line agent type list, terse usage notes — for small/local models where tool-spec tokens are expensive. Per-option details stay in the parameter descriptions in every mode (the parameter schema is never customizable). Applies on the next pi session.
 

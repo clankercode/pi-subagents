@@ -175,7 +175,7 @@ describe("print mode background notifications", () => {
     await vi.advanceTimersByTimeAsync(250);
     vi.mocked(pi.sendMessage).mockClear();
 
-    let resolveResume!: (value: string) => void;
+    let resolveResume!: (value: { text: string; failure?: string }) => void;
     vi.mocked(resumeAgent).mockReturnValue(
       new Promise((resolve) => {
         resolveResume = resolve;
@@ -199,7 +199,7 @@ describe("print mode background notifications", () => {
     expect(resumed.content[0].text).toContain(`Agent ID: ${id}`);
     expect(resumed.content[0].text).not.toContain("resumed output");
 
-    resolveResume("resumed output");
+    resolveResume({ text: "resumed output" });
     await vi.advanceTimersByTimeAsync(250);
 
     expect(pi.sendMessage).toHaveBeenCalledWith(

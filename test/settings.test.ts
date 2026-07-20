@@ -146,6 +146,15 @@ describe("settings persistence", () => {
     expect(loadSettings(projectDir)).toEqual({}); // invalid value dropped
   });
 
+  it("round-trips outputTranscript (true and false); keeps boolean, drops non-boolean", () => {
+    saveSettings({ outputTranscript: false }, projectDir);
+    expect(loadSettings(projectDir)).toEqual({ outputTranscript: false });
+    saveSettings({ outputTranscript: true }, projectDir);
+    expect(loadSettings(projectDir)).toEqual({ outputTranscript: true });
+    writeProject({ outputTranscript: "off" } as any);
+    expect(loadSettings(projectDir)).toEqual({}); // non-boolean dropped
+  });
+
   it("sanitize drops non-boolean schedulingEnabled silently", async () => {
     writeProject({ schedulingEnabled: "yes" } as any);
     expect(loadSettings(projectDir)).toEqual({});
@@ -388,7 +397,8 @@ describe("settings persistence", () => {
         setToolDescriptionMode: vi.fn(),
         setFleetView: vi.fn(),
         setWidgetMode: vi.fn(),
-      };
+        setOutputTranscript: vi.fn(),
+      } as unknown as SettingsAppliers;
     });
 
     it("is a no-op on an empty settings object", () => {
@@ -401,6 +411,7 @@ describe("settings persistence", () => {
       expect(appliers.setScopeModels).not.toHaveBeenCalled();
       expect(appliers.setDisableDefaultAgents).not.toHaveBeenCalled();
       expect(appliers.setToolDescriptionMode).not.toHaveBeenCalled();
+      expect(appliers.setOutputTranscript).not.toHaveBeenCalled();
     });
 
     it("applies only the fields that are present", () => {
@@ -426,6 +437,7 @@ describe("settings persistence", () => {
           toolDescriptionMode: "compact",
           fleetView: false,
           widgetMode: "off",
+          outputTranscript: false,
         },
         appliers,
       );
@@ -439,6 +451,7 @@ describe("settings persistence", () => {
       expect(appliers.setToolDescriptionMode).toHaveBeenCalledWith("compact");
       expect(appliers.setFleetView).toHaveBeenCalledWith(false);
       expect(appliers.setWidgetMode).toHaveBeenCalledWith("off");
+      expect(appliers.setOutputTranscript).toHaveBeenCalledWith(false);
     });
 
     it("applies widgetMode; skips it when absent", () => {
@@ -453,6 +466,15 @@ describe("settings persistence", () => {
       expect(appliers.setFleetView).toHaveBeenCalledWith(true);
       applySettings({}, appliers);
       expect(appliers.setFleetView).toHaveBeenCalledTimes(1); // absence is "use default"
+    });
+
+    it("applies outputTranscript (true and false); skips it when absent", () => {
+      applySettings({ outputTranscript: false }, appliers);
+      expect(appliers.setOutputTranscript).toHaveBeenCalledWith(false);
+      applySettings({ outputTranscript: true }, appliers);
+      expect(appliers.setOutputTranscript).toHaveBeenCalledWith(true);
+      applySettings({}, appliers);
+      expect(appliers.setOutputTranscript).toHaveBeenCalledTimes(2); // absence is "use default"
     });
 
     it("applies scopeModels: false", () => {
@@ -528,7 +550,8 @@ describe("settings persistence", () => {
         setToolDescriptionMode: vi.fn(),
         setFleetView: vi.fn(),
         setWidgetMode: vi.fn(),
-      };
+        setOutputTranscript: vi.fn(),
+      } as unknown as SettingsAppliers;
     });
 
     it("loads, applies, and emits subagents:settings_loaded with merged settings", () => {

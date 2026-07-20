@@ -336,10 +336,20 @@ export class AgentManager {
         options.onSessionCreated?.(session);
       },
     })
-      .then(({ responseText, session, aborted, steered }) => {
+      .then(({ responseText, session, aborted, steered, failure }) => {
         // Don't overwrite status if externally stopped via abort()
         if (record.status !== "stopped") {
-          record.status = aborted ? "aborted" : steered ? "steered" : "completed";
+          // Precedence: a hard abort keeps "aborted"; then a failed final turn
+          // (provider error that pi resolved instead of rejecting, #144) is an
+          // honest "error" — not a completion with an empty or stale result.
+          if (aborted) {
+            record.status = "aborted";
+          } else if (failure) {
+            record.status = "error";
+            record.error = failure;
+          } else {
+            record.status = steered ? "steered" : "completed";
+          }
         }
         record.result = responseText;
         record.session = session;
@@ -518,16 +528,23 @@ export class AgentManager {
         options.onCompaction?.(info);
       },
       signal: record.abortController.signal,
-    }).then((responseText) => {
+    }).then(({ text, failure }) => {
+      // Same contract as the spawn path (#144): a failed final turn is an
+      // error, not a completion — but the resumed text stays available.
       if (record.status !== "stopped") {
-      record.status = "completed";
+        if (failure) {
+          record.status = "error";
+          record.error = failure;
+        } else {
+          record.status = "completed";
+        }
       }
-      record.result = responseText;
+      record.result = text;
       record.completedAt = Date.now();
       detach();
       this.onStop?.(record);
       this.completeBackground(record, true);
-      return responseText;
+      return text;
     }).catch((err) => {
       if (record.status !== "stopped") record.status = "error";
       record.error = err instanceof Error ? err.message : String(err);
