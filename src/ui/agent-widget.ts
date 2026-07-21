@@ -434,6 +434,69 @@ export class AgentWidget {
     };
   }
 
+  /**
+   * True when `ancestorId` appears in the parentAgentId chain of any
+   * running/queued snapshot we still know about (merged set, descendant
+   * map, or local manager). Used to keep finished parents visible so the
+   * tree does not mark healthy children as `⚠ orphan` (#1).
+   */
+  private hasLiveDescendant(ancestorId: string, known: Map<string, WidgetAgentSnapshot>): boolean {
+    const pool = new Map(known);
+    for (const [id, s] of this.descendantSnapshots) {
+      if (!pool.has(id)) pool.set(id, s);
+    }
+    for (const a of this.widgetAgents()) {
+      if (!pool.has(a.id)) pool.set(a.id, this.recordToSnapshot(a));
+    }
+    for (const s of pool.values()) {
+      if (s.status !== "running" && s.status !== "queued") continue;
+      const seen = new Set<string>();
+      let pid = s.parentAgentId;
+      while (pid && !seen.has(pid)) {
+        if (pid === ancestorId) return true;
+        seen.add(pid);
+        pid = pool.get(pid)?.parentAgentId;
+      }
+    }
+    return false;
+  }
+
+  /** Resolve a finished/live ancestor snapshot so the tree can keep the parent edge. */
+  private resolveAncestorSnapshot(id: string): WidgetAgentSnapshot | undefined {
+    const fromDesc = this.descendantSnapshots.get(id);
+    if (fromDesc) return fromDesc;
+    const rec = this.manager.getRecord?.(id);
+    if (rec) return this.recordToSnapshot(rec);
+    return undefined;
+  }
+
+  /**
+   * Ensure every live agent has its full parentAgentId chain present in
+   * `merged`. Recovers ancestors from descendantSnapshots or the manager so
+   * completed parents that aged out of the linger window still anchor the tree.
+   */
+  private retainAncestorsOfLive(merged: Map<string, WidgetAgentSnapshot>): void {
+    const live = [...merged.values()].filter(
+      (s) => s.status === "running" || s.status === "queued",
+    );
+    for (const child of live) {
+      const seen = new Set<string>();
+      let pid = child.parentAgentId;
+      while (pid && !seen.has(pid)) {
+        seen.add(pid);
+        let parent = merged.get(pid);
+        if (!parent) {
+          parent = this.resolveAncestorSnapshot(pid);
+          if (!parent) break; // true orphan — parent was never known / hard-deleted
+          merged.set(pid, parent);
+          // Keep a copy so later prunes/updates can still recover the chain.
+          this.descendantSnapshots.set(pid, parent);
+        }
+        pid = parent.parentAgentId;
+      }
+    }
+  }
+
   private visibleSnapshots(): WidgetAgentSnapshot[] {
     const merged = new Map(this.descendantSnapshots);
     const allAgents = this.widgetAgents();
@@ -448,15 +511,20 @@ export class AgentWidget {
     }
     const liveRecordIds = new Set(allAgents.map(a => a.id));
     for (const [id, snapshot] of merged) {
-      if (snapshot.status !== "running" && snapshot.status !== "queued" && !this.shouldShowFinished(id, snapshot.status, snapshot.completedAt)) {
-        merged.delete(id);
-        if (this.descendantSnapshots.has(id)) this.descendantSnapshots.delete(id);
-        if (!liveRecordIds.has(id)) {
-          this.finishedTurnAge.delete(id);
-          this.finishedAt.delete(id);
-        }
+      if (snapshot.status === "running" || snapshot.status === "queued") continue;
+      if (this.shouldShowFinished(id, snapshot.status, snapshot.completedAt)) continue;
+      // Keep finished agents that still anchor a live descendant tree.
+      if (this.hasLiveDescendant(id, merged)) continue;
+      merged.delete(id);
+      if (this.descendantSnapshots.has(id)) this.descendantSnapshots.delete(id);
+      if (!liveRecordIds.has(id)) {
+        this.finishedTurnAge.delete(id);
+        this.finishedAt.delete(id);
       }
     }
+    // Re-attach any ancestors of live agents that were not already in the set
+    // (e.g. recovered from manager after descendant map had already dropped them).
+    this.retainAncestorsOfLive(merged);
     return [...merged.values()];
   }
 

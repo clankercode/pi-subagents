@@ -633,10 +633,32 @@ export class AgentManager {
     return removed;
   }
 
+  /**
+   * IDs of terminal agents that still sit on the parentAgentId chain of a
+   * running/queued agent on this manager. Kept so cleanup does not drop a
+   * parent while a same-manager child is live (#1).
+   */
+  private ancestorIdsOfLiveAgents(): Set<string> {
+    const protect = new Set<string>();
+    for (const r of this.agents.values()) {
+      if (r.status !== "running" && r.status !== "queued") continue;
+      const seen = new Set<string>();
+      let pid = r.parentAgentId;
+      while (pid && !seen.has(pid)) {
+        protect.add(pid);
+        seen.add(pid);
+        pid = this.agents.get(pid)?.parentAgentId;
+      }
+    }
+    return protect;
+  }
+
   private cleanup() {
     const cutoff = Date.now() - 10 * 60_000;
+    const protect = this.ancestorIdsOfLiveAgents();
     for (const [id, record] of this.agents) {
       if (record.status === "running" || record.status === "queued") continue;
+      if (protect.has(id)) continue;
       if ((record.completedAt ?? 0) >= cutoff) continue;
       this.removeRecord(id, record);
     }

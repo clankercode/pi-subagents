@@ -1,0 +1,35 @@
+# Local bug log (mirrors GitHub issues on clankercode/pi-subagents — not upstream)
+
+## parents-with-running-children-stay-alive / orphan widget (2026-07-21)
+**Issue:** https://github.com/clankercode/pi-subagents/issues/1
+**Status:** fixed in widget (retain finished ancestors of live descendants) + manager 10m cleanup protection for same-manager parent chains. Parent *completion* is still immediate (notifications not delayed); tree visibility fixed.
+
+**Symptom:** Nested subagents often show as `⚠ orphan` in the recursive widget tree.
+
+**Likely cause:** Parent agent reaches a terminal state (complete / abort / stop / clear) while children are still running or still referenced. Tree builder marks nodes whose `parentAgentId` no longer exists in the snapshot set as `orphaned`.
+
+**Desired behavior:**
+- A parent agent that still has running (or queued) subagents must **stay alive** — not be treated as finished/cleared/pruned until those children settle (or are aborted with the parent in a deliberate cascade).
+- Widget tree should not show healthy recursive children as orphans just because the parent turn ended.
+- Must work recursively (grandparent → parent → child).
+
+**Notes / investigation hooks:**
+- `src/ui/agent-widget-tree.ts` — `orphaned` when parent id missing from tree nodes
+- `AgentManager.clearCompleted` / session switch / parent natural completion
+- `session_shutdown` → `abortAll` is a separate case (session going down)
+- Parent completion currently does not hold for live children
+
+---
+
+## setting: roll up child usage into parent (recursive) (2026-07-21)
+**Issue:** https://github.com/clankercode/pi-subagents/issues/2
+
+**Request:** Add a setting (default TBD, likely off) that adds child subagent token usage into the parent’s usage totals.
+
+**Requirements:**
+- Must work **recursively** (depth 2+ nested agents roll up through each ancestor).
+- Should cover the components we already track on `lifetimeUsage` (`input`, `output`, `cacheWrite`); cost only if/when we surface it.
+- Parent thread / session accounting should reflect rolled-up totals when enabled.
+- Document clearly that API spend is still separate sessions; this is accounting visibility, not changing billing providers.
+
+**Current behavior:** Child usage stays only on the child `AgentRecord`; not rolled into parent session stats.

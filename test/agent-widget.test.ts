@@ -231,6 +231,92 @@ describe("AgentWidget recursive rendering", () => {
     expect(ui.setWidget).toHaveBeenLastCalledWith("agents", undefined);
   });
 
+  // #1 — finished parent must stay in the tree while a descendant is live, or
+  // buildAgentTree marks the child `orphaned` (⚠ orphan) because parentAgentId
+  // no longer resolves.
+  it("keeps a finished parent visible while a live descendant still needs it (no ⚠ orphan)", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    // Parent exists only as a descendant snapshot (depth≥1 recursive path).
+    const manager = { listAgents: () => [], getRecord: () => undefined } as any;
+    const ui = { setStatus: vi.fn(), setWidget: vi.fn() } as any;
+    const widget = new AgentWidget(manager, new Map());
+    widget.setUICtx(ui);
+
+    widget.upsertSnapshot(snap({
+      id: "parent",
+      description: "finished parent",
+      status: "completed",
+      startedAt: 1,
+      completedAt: 1_000,
+      depth: 1,
+    }));
+    widget.upsertSnapshot(snap({
+      id: "child",
+      parentAgentId: "parent",
+      description: "still running child",
+      status: "running",
+      startedAt: 500,
+      depth: 2,
+    }));
+
+    const factory = ui.setWidget.mock.calls.at(-1)[1];
+    const component = factory({ terminal: { columns: 120 }, requestRender: vi.fn() }, plainTheme);
+
+    // Expire the completed linger window (age advances past 1 turn).
+    widget.onTurnStart();
+
+    const text = component.render(120).join("\n");
+    expect(text).toContain("still running child");
+    expect(text).toContain("finished parent");
+    expect(text).not.toContain("⚠ orphan");
+  });
+
+  it("keeps a finished grandparent chain while a depth-3 descendant is live", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const manager = { listAgents: () => [], getRecord: () => undefined } as any;
+    const ui = { setStatus: vi.fn(), setWidget: vi.fn() } as any;
+    const widget = new AgentWidget(manager, new Map());
+    widget.setUICtx(ui);
+
+    widget.upsertSnapshot(snap({
+      id: "gp",
+      description: "grandparent done",
+      status: "completed",
+      startedAt: 1,
+      completedAt: 1_000,
+      depth: 1,
+    }));
+    widget.upsertSnapshot(snap({
+      id: "p",
+      parentAgentId: "gp",
+      description: "parent done",
+      status: "completed",
+      startedAt: 2,
+      completedAt: 1_000,
+      depth: 2,
+    }));
+    widget.upsertSnapshot(snap({
+      id: "c",
+      parentAgentId: "p",
+      description: "grandchild running",
+      status: "running",
+      startedAt: 500,
+      depth: 3,
+    }));
+
+    const factory = ui.setWidget.mock.calls.at(-1)[1];
+    const component = factory({ terminal: { columns: 120 }, requestRender: vi.fn() }, plainTheme);
+    widget.onTurnStart();
+
+    const text = component.render(120).join("\n");
+    expect(text).toContain("grandchild running");
+    expect(text).toContain("parent done");
+    expect(text).toContain("grandparent done");
+    expect(text).not.toContain("⚠ orphan");
+  });
+
   it("ages completed descendant snapshots out by wall clock while another agent keeps running", () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);
