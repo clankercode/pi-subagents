@@ -1228,3 +1228,74 @@ describe("AgentManager — rollupChildUsage", () => {
     expect(manager.getRecord(childId)!.lifetimeUsage).toEqual({ input: 50, output: 10, cacheWrite: 2 });
   });
 });
+
+describe("AgentManager — registry lifecycle", () => {
+  let manager: AgentManager;
+
+  afterEach(() => {
+    manager?.dispose();
+    clearAgentRecordRegistry();
+  });
+
+  it("unregisters on failed startAgent so the process-wide map does not leak", async () => {
+    const { createWorktree } = await import("../src/worktree.js");
+    const { listRegisteredAgentIds } = await import("../src/usage-registry.js");
+    clearAgentRecordRegistry();
+    vi.mocked(createWorktree).mockReturnValueOnce(undefined);
+    manager = new AgentManager();
+    expect(() =>
+      manager.spawn(mockPi, mockCtx, "general-purpose", "x", {
+        description: "x",
+        isolation: "worktree",
+        isBackground: true,
+      }),
+    ).toThrow(/isolation: "worktree"/);
+    expect(manager.listAgents()).toEqual([]);
+    expect(listRegisteredAgentIds()).toEqual([]);
+  });
+
+  it("clearCompleted keeps a finished parent while a same-manager child is live", async () => {
+    manager = new AgentManager(undefined, 8);
+    manager.setRollupChildUsage(true);
+    vi.mocked(runAgent).mockImplementation(async () => ({
+      responseText: "p",
+      session: mockSession(),
+      aborted: false,
+      steered: false,
+    }));
+    const parentId = manager.spawn(mockPi, mockCtx, "general-purpose", "p", {
+      description: "parent",
+      isBackground: true,
+    });
+    await manager.getRecord(parentId)!.promise;
+
+    let resolveChild!: (v: any) => void;
+    vi.mocked(runAgent).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveChild = resolve;
+        }) as any,
+    );
+    const childId = manager.spawn(mockPi, mockCtx, "general-purpose", "c", {
+      description: "child",
+      isBackground: true,
+      parentAgentId: parentId,
+      depth: 2,
+    });
+    expect(manager.getRecord(childId)!.status).toBe("running");
+
+    manager.clearCompleted();
+    expect(manager.getRecord(parentId)).toBeDefined();
+
+    resolveChild({
+      responseText: "done",
+      session: mockSession(),
+      aborted: false,
+      steered: false,
+    });
+    await manager.getRecord(childId)!.promise;
+    manager.clearCompleted();
+    expect(manager.getRecord(parentId)).toBeUndefined();
+    expect(manager.getRecord(childId)).toBeUndefined();
+  });
+});

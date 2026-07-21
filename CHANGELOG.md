@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`rollupChildUsage` setting** — when on, each subagent's token usage deltas are also added to every ancestor along `parentAgentId` (recursive, process-wide). Default off. Accounting visibility only — does not change provider billing. `/agents → Settings → Roll up child usage`.
+
+### Fixed
+- **Finished parents no longer leave live children as `⚠ orphan`** in the recursive widget — keep ancestor chains visible while any descendant is running/queued; 10‑minute cleanup and clear paths also retain parents that still anchor live children (including nested managers).
+
 ## [0.14.0] - 2026-07-21
 
 Reimplements selected upstream [tintinweb/pi-subagents](https://github.com/tintinweb/pi-subagents) v0.14.x fixes and polish without merging upstream. Fork-specific behavior (always-background agents, herdr, dashboard, recursive widget, wait path) is preserved. Peer range stays `>=0.74.0` (no forced pi 0.80 bump).

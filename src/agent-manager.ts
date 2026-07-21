@@ -15,7 +15,13 @@ import { resumeAgent, runAgent, type ToolActivity } from "./agent-runner.js";
 import type { EventBus } from "./cross-extension-rpc.js";
 import { type AgentInvocation, type AgentRecord, type IsolationMode, MAX_RECURSIVE_DEPTH, type SubagentType, type ThinkingLevel } from "./types.js";
 import { addUsage } from "./usage.js";
-import { registerAgentRecord, rollupUsageToAncestors, unregisterAgentRecord } from "./usage-registry.js";
+import {
+  ancestorIdsOfLiveAgentsGlobal,
+  getRegisteredAgentRecord,
+  registerAgentRecord,
+  rollupUsageToAncestors,
+  unregisterAgentRecord,
+} from "./usage-registry.js";
 import { cleanupWorktree, createWorktree, pruneWorktrees, } from "./worktree.js";
 
 export type OnAgentComplete = (record: AgentRecord) => void;
@@ -244,6 +250,9 @@ export class AgentManager {
     } catch (err) {
       this.backgroundAgentIds.delete(id);
       this.agents.delete(id);
+      // Force-unregister: spawn never produced a live agent, and no descendant
+      // can legitimately reference this id yet.
+      unregisterAgentRecord(id, true);
       throw err;
     }
     return id;
@@ -629,52 +638,51 @@ export class AgentManager {
     return true;
   }
 
-  /** Dispose a record's session and remove it from the map. */
-  private removeRecord(id: string, record: AgentRecord): void {
+  /**
+   * Dispose a record's session and remove it from this manager's map.
+   * When `forceRegistry` is false (default), the process-wide usage registry
+   * retains the record if any live descendant still needs it for rollup (#2).
+   * After unregister, soft-release ancestors that were only retained for us.
+   */
+  private removeRecord(id: string, record: AgentRecord, forceRegistry = false): void {
+    const parentId = record.parentAgentId;
     record.session?.dispose?.();
     record.session = undefined;
     this.backgroundAgentIds.delete(id);
     this.completedBackgroundCallbacks.delete(id);
     this.agents.delete(id);
-    unregisterAgentRecord(id);
+    unregisterAgentRecord(id, forceRegistry);
+    // Cascade: if this was the last live descendant, drop retained ancestors.
+    let pid = parentId;
+    while (pid) {
+      const ancestor = getRegisteredAgentRecord(pid);
+      if (!ancestor) break;
+      const next = ancestor.parentAgentId;
+      if (!unregisterAgentRecord(pid, false)) break;
+      pid = next;
+    }
   }
 
   /** Remove selected terminal records. Running and queued records are never removed. */
   clearRecords(ids: string[]): string[] {
+    const protect = ancestorIdsOfLiveAgentsGlobal();
     const removed: string[] = [];
     for (const id of ids) {
       const record = this.agents.get(id);
       if (!record) continue;
       if (record.status === "running" || record.status === "queued") continue;
+      // Keep terminal parents that still anchor live (possibly nested) children.
+      if (protect.has(id)) continue;
       this.removeRecord(id, record);
       removed.push(id);
     }
     return removed;
   }
 
-  /**
-   * IDs of terminal agents that still sit on the parentAgentId chain of a
-   * running/queued agent on this manager. Kept so cleanup does not drop a
-   * parent while a same-manager child is live (#1).
-   */
-  private ancestorIdsOfLiveAgents(): Set<string> {
-    const protect = new Set<string>();
-    for (const r of this.agents.values()) {
-      if (r.status !== "running" && r.status !== "queued") continue;
-      const seen = new Set<string>();
-      let pid = r.parentAgentId;
-      while (pid && !seen.has(pid)) {
-        protect.add(pid);
-        seen.add(pid);
-        pid = this.agents.get(pid)?.parentAgentId;
-      }
-    }
-    return protect;
-  }
-
   private cleanup() {
     const cutoff = Date.now() - 10 * 60_000;
-    const protect = this.ancestorIdsOfLiveAgents();
+    // Process-wide: nested children live on other managers but share the registry.
+    const protect = ancestorIdsOfLiveAgentsGlobal();
     for (const [id, record] of this.agents) {
       if (record.status === "running" || record.status === "queued") continue;
       if (protect.has(id)) continue;
@@ -688,10 +696,15 @@ export class AgentManager {
    * Called on session start/switch so tasks from a prior session don't persist.
    * Pass skipUnconsumed=true to preserve records the LLM hasn't read yet
    * (resultConsumed=false) — they will be evicted by the 10-minute cleanup timer instead.
+   *
+   * Also skips terminal agents that still anchor process-wide live descendants
+   * (nested managers), so usage rollup and parent identity stay intact.
    */
   clearCompleted(skipUnconsumed = false): void {
+    const protect = ancestorIdsOfLiveAgentsGlobal();
     for (const [id, record] of this.agents) {
       if (record.status === "running" || record.status === "queued") continue;
+      if (protect.has(id)) continue;
       if (skipUnconsumed && !record.resultConsumed) continue;
       this.removeRecord(id, record);
     }
@@ -753,7 +766,9 @@ export class AgentManager {
     this.queue = [];
     for (const [id, record] of this.agents) {
       record.session?.dispose();
-      unregisterAgentRecord(id);
+      // Force: manager is going away; keep registry only if live descendants
+      // elsewhere still need the id (nested managers outliving this one).
+      unregisterAgentRecord(id, false);
     }
     this.agents.clear();
     this.backgroundAgentIds.clear();

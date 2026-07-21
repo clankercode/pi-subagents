@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentRecord } from "../src/types.js";
 import {
+  ancestorIdsOfLiveAgentsGlobal,
   clearAgentRecordRegistry,
   getRegisteredAgentRecord,
+  isAncestorOfAnyLiveAgent,
   registerAgentRecord,
   rollupUsageToAncestors,
   unregisterAgentRecord,
@@ -63,5 +65,21 @@ describe("usage-registry", () => {
     expect(() =>
       rollupUsageToAncestors(c, { input: 1, output: 0, cacheWrite: 0 }, true),
     ).not.toThrow();
+  });
+
+  it("refuses to unregister an ancestor of a live agent unless forced", () => {
+    const p = rec({ id: "p", status: "completed" });
+    const c = rec({ id: "c", parentAgentId: "p", depth: 2, status: "running" });
+    registerAgentRecord(p);
+    registerAgentRecord(c);
+    expect(isAncestorOfAnyLiveAgent("p")).toBe(true);
+    expect(ancestorIdsOfLiveAgentsGlobal().has("p")).toBe(true);
+    expect(unregisterAgentRecord("p")).toBe(false);
+    expect(getRegisteredAgentRecord("p")).toBe(p);
+    // Further child usage still rolls up
+    rollupUsageToAncestors(c, { input: 7, output: 0, cacheWrite: 0 }, true);
+    expect(p.lifetimeUsage.input).toBe(7);
+    expect(unregisterAgentRecord("p", true)).toBe(true);
+    expect(getRegisteredAgentRecord("p")).toBeUndefined();
   });
 });
