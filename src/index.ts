@@ -613,6 +613,11 @@ export default function (pi: ExtensionAPI) {
   function getOutputTranscriptDefault(): boolean { return outputTranscriptDefault; }
   function setOutputTranscript(b: boolean): void { outputTranscriptDefault = b; }
 
+  // Roll child token usage into ancestor agents along parentAgentId (recursive).
+  // Default off — accounting only when enabled; does not change provider billing.
+  function setRollupChildUsage(b: boolean): void { manager.setRollupChildUsage(b); }
+  function getRollupChildUsage(): boolean { return manager.getRollupChildUsage(); }
+
   // ---- Join mode configuration ----
   let defaultJoinMode: JoinMode = 'async';
   function getDefaultJoinMode(): JoinMode { return defaultJoinMode; }
@@ -753,6 +758,7 @@ export default function (pi: ExtensionAPI) {
       setFleetView: setFleetViewEnabled,
       setWidgetMode: setWidgetMode,
       setOutputTranscript: setOutputTranscript,
+      setRollupChildUsage: setRollupChildUsage,
     },
     (event, payload) => pi.events.emit(event, payload),
   );
@@ -2069,6 +2075,7 @@ ${systemPrompt}
       fleetView: isFleetViewEnabled(),
       widgetMode: getWidgetMode(),
       outputTranscript: getOutputTranscriptDefault(),
+      rollupChildUsage: getRollupChildUsage(),
     };
   }
 
@@ -2136,6 +2143,13 @@ ${systemPrompt}
           label: "Output transcript",
           description: "Write each subagent's .output transcript by default. A custom agent's output_transcript frontmatter overrides this.",
           currentValue: getOutputTranscriptDefault() ? "on" : "off",
+          values: ["on", "off"],
+        },
+        {
+          id: "rollupChildUsage",
+          label: "Roll up child usage",
+          description: "Add each subagent's token usage into every ancestor along parentAgentId (recursive). Accounting only — does not change provider billing.",
+          currentValue: getRollupChildUsage() ? "on" : "off",
           values: ["on", "off"],
         },
         {
@@ -2239,6 +2253,10 @@ ${systemPrompt}
         const enabled = value === "on";
         setOutputTranscript(enabled);
         notifyApplied(ctx, `Output transcript ${enabled ? "enabled" : "disabled"} by default`);
+      } else if (id === "rollupChildUsage") {
+        const enabled = value === "on";
+        setRollupChildUsage(enabled);
+        notifyApplied(ctx, `Child usage rollup ${enabled ? "enabled" : "disabled"}`);
       } else if (id === "herdrReportWorking") {
         const enabled = value === "on";
         setHerdrReportWorking(enabled);

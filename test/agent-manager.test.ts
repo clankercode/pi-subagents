@@ -16,6 +16,7 @@ vi.mock("../src/worktree.js", () => ({
 
 import { runAgent } from "../src/agent-runner.js";
 import { HerdrReporter } from "../src/herdr.js";
+import { clearAgentRecordRegistry } from "../src/usage-registry.js";
 
 const mockPi = {} as any;
 const mockCtx = { cwd: "/tmp" } as any;
@@ -1136,5 +1137,94 @@ describe("AgentManager — herdr acquire/release pairing", () => {
 
     expect(reports(calls)).toHaveLength(1);
     expect(releases(calls)).toHaveLength(1);
+  });
+});
+
+describe("AgentManager — rollupChildUsage", () => {
+  let manager: AgentManager;
+
+  afterEach(() => {
+    manager?.dispose();
+    clearAgentRecordRegistry();
+  });
+
+  it("when enabled, rolls child assistant usage into parent and grandparent", async () => {
+    manager = new AgentManager(undefined, 8);
+    manager.setRollupChildUsage(true);
+
+    // Parent run: no usage events
+    vi.mocked(runAgent).mockImplementation(async () => ({
+      responseText: "parent done",
+      session: mockSession(),
+      aborted: false,
+      steered: false,
+    }));
+
+    // Spawn parent, then child with parentAgentId — both on this manager (simulates registry walk).
+    const parentId = manager.spawn(mockPi, mockCtx, "general-purpose", "parent work", {
+      description: "parent",
+      isBackground: true,
+    });
+    await manager.getRecord(parentId)!.promise;
+
+    const parent = manager.getRecord(parentId)!;
+    parent.status = "completed";
+
+    vi.mocked(runAgent).mockImplementation(async (_ctx, _type, _prompt, opts: any) => {
+      // Emit usage mid-run then complete
+      opts.onAssistantUsage?.({ input: 50, output: 10, cacheWrite: 2 });
+      return {
+        responseText: "child done",
+        session: mockSession(),
+        aborted: false,
+        steered: false,
+      };
+    });
+
+    const childId = manager.spawn(mockPi, mockCtx, "general-purpose", "child work", {
+      description: "child",
+      isBackground: true,
+      parentAgentId: parentId,
+      depth: 2,
+    });
+    await manager.getRecord(childId)!.promise;
+
+    const child = manager.getRecord(childId)!;
+    expect(child.lifetimeUsage).toEqual({ input: 50, output: 10, cacheWrite: 2 });
+    expect(parent.lifetimeUsage).toEqual({ input: 50, output: 10, cacheWrite: 2 });
+  });
+
+  it("when disabled, does not roll child usage into parent", async () => {
+    manager = new AgentManager(undefined, 8);
+    manager.setRollupChildUsage(false);
+
+    const parentId = manager.spawn(mockPi, mockCtx, "general-purpose", "p", {
+      description: "parent",
+      isBackground: true,
+    });
+    await manager.getRecord(parentId)!.promise;
+    const parent = manager.getRecord(parentId)!;
+    parent.lifetimeUsage = { input: 0, output: 0, cacheWrite: 0 };
+
+    vi.mocked(runAgent).mockImplementation(async (_ctx, _type, _prompt, opts: any) => {
+      opts.onAssistantUsage?.({ input: 50, output: 10, cacheWrite: 2 });
+      return {
+        responseText: "done",
+        session: mockSession(),
+        aborted: false,
+        steered: false,
+      };
+    });
+
+    const childId = manager.spawn(mockPi, mockCtx, "general-purpose", "c", {
+      description: "child",
+      isBackground: true,
+      parentAgentId: parentId,
+      depth: 2,
+    });
+    await manager.getRecord(childId)!.promise;
+
+    expect(parent.lifetimeUsage).toEqual({ input: 0, output: 0, cacheWrite: 0 });
+    expect(manager.getRecord(childId)!.lifetimeUsage).toEqual({ input: 50, output: 10, cacheWrite: 2 });
   });
 });

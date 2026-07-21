@@ -125,6 +125,13 @@ export interface SubagentsSettings {
    * (`isolation: worktree`), or memory files.
    */
   outputTranscript?: boolean;
+  /**
+   * When true, each subagent's token usage deltas are also added to every
+   * ancestor along `parentAgentId` (recursive, across nested managers).
+   * Defaults to `false`. Accounting visibility only — does not change provider
+   * billing; child sessions still bill as their own API calls.
+   */
+  rollupChildUsage?: boolean;
 }
 
 export type ToolDescriptionMode = "full" | "compact" | "custom";
@@ -149,6 +156,7 @@ export interface SettingsAppliers {
   setFleetView: (b: boolean) => void;
   setWidgetMode: (mode: WidgetMode) => void;
   setOutputTranscript: (b: boolean) => void;
+  setRollupChildUsage: (b: boolean) => void;
 }
 
 /** Emit callback — a subset of `pi.events.emit` to keep helpers testable. */
@@ -234,6 +242,9 @@ function sanitize(raw: unknown): SubagentsSettings {
   if (typeof r.outputTranscript === "boolean") {
     out.outputTranscript = r.outputTranscript;
   }
+  if (typeof r.rollupChildUsage === "boolean") {
+    out.rollupChildUsage = r.rollupChildUsage;
+  }
   return out;
 }
 
@@ -299,6 +310,7 @@ export function applySettings(s: SubagentsSettings, appliers: SettingsAppliers):
   if (typeof s.fleetView === "boolean") appliers.setFleetView(s.fleetView);
   if (s.widgetMode) appliers.setWidgetMode(s.widgetMode);
   if (typeof s.outputTranscript === "boolean") appliers.setOutputTranscript(s.outputTranscript);
+  if (typeof s.rollupChildUsage === "boolean") appliers.setRollupChildUsage(s.rollupChildUsage);
 }
 
 /**

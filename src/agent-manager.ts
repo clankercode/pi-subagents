@@ -15,6 +15,7 @@ import { resumeAgent, runAgent, type ToolActivity } from "./agent-runner.js";
 import type { EventBus } from "./cross-extension-rpc.js";
 import { type AgentInvocation, type AgentRecord, type IsolationMode, MAX_RECURSIVE_DEPTH, type SubagentType, type ThinkingLevel } from "./types.js";
 import { addUsage } from "./usage.js";
+import { registerAgentRecord, rollupUsageToAncestors, unregisterAgentRecord } from "./usage-registry.js";
 import { cleanupWorktree, createWorktree, pruneWorktrees, } from "./worktree.js";
 
 export type OnAgentComplete = (record: AgentRecord) => void;
@@ -135,6 +136,12 @@ export class AgentManager {
   private backgroundAgentIds = new Set<string>();
   /** Background terminal callbacks already emitted; prevents abort/settle double delivery. */
   private completedBackgroundCallbacks = new Set<string>();
+  /**
+   * When true, each assistant usage delta is also added to every ancestor
+   * along `parentAgentId` (process-wide registry — works across nested managers).
+   * Default false. Accounting only; does not change provider billing.
+   */
+  private rollupChildUsage = false;
 
   constructor(
     onComplete?: OnAgentComplete,
@@ -154,6 +161,14 @@ export class AgentManager {
   }
 
   /** Update the max concurrent background agents limit. */
+  setRollupChildUsage(enabled: boolean): void {
+    this.rollupChildUsage = enabled;
+  }
+
+  getRollupChildUsage(): boolean {
+    return this.rollupChildUsage;
+  }
+
   setMaxConcurrent(n: number) {
     this.maxConcurrent = Math.max(1, n);
     // Start queued agents if the new limit allows
@@ -211,6 +226,7 @@ export class AgentManager {
       options.onOutputFileCreated?.(record.outputFile, id);
     }
     this.agents.set(id, record);
+    registerAgentRecord(record);
     if (options.isBackground) this.backgroundAgentIds.add(id);
 
     const args: SpawnArgs = { pi, ctx, type, prompt, options };
@@ -314,6 +330,7 @@ export class AgentManager {
       onTextDelta: options.onTextDelta,
       onAssistantUsage: (usage) => {
         addUsage(record.lifetimeUsage, usage);
+        rollupUsageToAncestors(record, usage, this.rollupChildUsage);
         options.onAssistantUsage?.(usage);
       },
       onCompaction: (info) => {
@@ -520,6 +537,7 @@ export class AgentManager {
       },
       onAssistantUsage: (usage) => {
         addUsage(record.lifetimeUsage, usage);
+        rollupUsageToAncestors(record, usage, this.rollupChildUsage);
         options.onAssistantUsage?.(usage);
       },
       onCompaction: (info) => {
@@ -618,6 +636,7 @@ export class AgentManager {
     this.backgroundAgentIds.delete(id);
     this.completedBackgroundCallbacks.delete(id);
     this.agents.delete(id);
+    unregisterAgentRecord(id);
   }
 
   /** Remove selected terminal records. Running and queued records are never removed. */
@@ -732,8 +751,9 @@ export class AgentManager {
     clearInterval(this.cleanupInterval);
     // Clear queue
     this.queue = [];
-    for (const record of this.agents.values()) {
+    for (const [id, record] of this.agents) {
       record.session?.dispose();
+      unregisterAgentRecord(id);
     }
     this.agents.clear();
     this.backgroundAgentIds.clear();

@@ -155,6 +155,15 @@ describe("settings persistence", () => {
     expect(loadSettings(projectDir)).toEqual({}); // non-boolean dropped
   });
 
+  it("round-trips rollupChildUsage (true and false); keeps boolean, drops non-boolean", () => {
+    saveSettings({ rollupChildUsage: true }, projectDir);
+    expect(loadSettings(projectDir)).toEqual({ rollupChildUsage: true });
+    saveSettings({ rollupChildUsage: false }, projectDir);
+    expect(loadSettings(projectDir)).toEqual({ rollupChildUsage: false });
+    writeProject({ rollupChildUsage: "yes" } as any);
+    expect(loadSettings(projectDir)).toEqual({});
+  });
+
   it("sanitize drops non-boolean schedulingEnabled silently", async () => {
     writeProject({ schedulingEnabled: "yes" } as any);
     expect(loadSettings(projectDir)).toEqual({});
@@ -398,6 +407,7 @@ describe("settings persistence", () => {
         setFleetView: vi.fn(),
         setWidgetMode: vi.fn(),
         setOutputTranscript: vi.fn(),
+        setRollupChildUsage: vi.fn(),
       } as unknown as SettingsAppliers;
     });
 
@@ -412,6 +422,7 @@ describe("settings persistence", () => {
       expect(appliers.setDisableDefaultAgents).not.toHaveBeenCalled();
       expect(appliers.setToolDescriptionMode).not.toHaveBeenCalled();
       expect(appliers.setOutputTranscript).not.toHaveBeenCalled();
+      expect(appliers.setRollupChildUsage).not.toHaveBeenCalled();
     });
 
     it("applies only the fields that are present", () => {
@@ -438,6 +449,7 @@ describe("settings persistence", () => {
           fleetView: false,
           widgetMode: "off",
           outputTranscript: false,
+          rollupChildUsage: true,
         },
         appliers,
       );
@@ -452,6 +464,16 @@ describe("settings persistence", () => {
       expect(appliers.setFleetView).toHaveBeenCalledWith(false);
       expect(appliers.setWidgetMode).toHaveBeenCalledWith("off");
       expect(appliers.setOutputTranscript).toHaveBeenCalledWith(false);
+      expect(appliers.setRollupChildUsage).toHaveBeenCalledWith(true);
+    });
+
+    it("applies rollupChildUsage (true and false); skips it when absent", () => {
+      applySettings({ rollupChildUsage: true }, appliers);
+      expect(appliers.setRollupChildUsage).toHaveBeenCalledWith(true);
+      applySettings({ rollupChildUsage: false }, appliers);
+      expect(appliers.setRollupChildUsage).toHaveBeenCalledWith(false);
+      applySettings({}, appliers);
+      expect(appliers.setRollupChildUsage).toHaveBeenCalledTimes(2);
     });
 
     it("applies widgetMode; skips it when absent", () => {
@@ -551,6 +573,7 @@ describe("settings persistence", () => {
         setFleetView: vi.fn(),
         setWidgetMode: vi.fn(),
         setOutputTranscript: vi.fn(),
+        setRollupChildUsage: vi.fn(),
       } as unknown as SettingsAppliers;
     });
 

@@ -23,6 +23,7 @@
 
 ## setting: roll up child usage into parent (recursive) (2026-07-21)
 **Issue:** https://github.com/clankercode/pi-subagents/issues/2
+**Status:** implemented — `rollupChildUsage` setting (default off), process-wide record registry, recursive parentAgentId walk.
 
 **Request:** Add a setting (default TBD, likely off) that adds child subagent token usage into the parent’s usage totals.
 
