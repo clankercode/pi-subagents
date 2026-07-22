@@ -292,12 +292,12 @@ All `Agent` calls run in the background. Completion notifications are delivered 
 
 ### `get_subagent_result`
 
-Check status and retrieve bounded output from a background agent. The tool is safe-by-default for LLM context: normal results, verbose conversation output, and `peek` responses are capped. If output is truncated, the response includes the output file path and continuation guidance.
+Check status and retrieve bounded output from a background agent. The tool is safe-by-default for LLM context: normal results, verbose conversation output, and `peek` responses are capped. If output is truncated, the response includes the output file path and continuation guidance. While the agent is still running or queued, every response (including peek) reminds you that `wait: true` can block until completion and that parents are automatically notified when subagents complete — no polling required.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `agent_id` | string | yes | Agent ID to check |
-| `wait` | boolean | no | Wait for completion |
+| `wait` | boolean | no | Wait for completion (early-exits on parent abort or a queued *steering* message; follow-ups do not interrupt) |
 | `verbose` | boolean | no | Include a bounded conversation preview |
 | `peek` | object | no | Return a bounded tail/filter view with line numbers. Supports `lines`, `regex`, and `after` for incremental reads. |
 

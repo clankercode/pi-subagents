@@ -10,7 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **`rollupChildUsage` setting** — when on, each subagent's token usage deltas are also added to every ancestor along `parentAgentId` (recursive, process-wide). Default off. Accounting visibility only — does not change provider billing. `/agents → Settings → Roll up child usage`.
 
+### Changed
+- **`get_subagent_result` still-running responses always include wait + notification guidance** — every response while an agent is running or queued (status check, wait timeout/abort/pending-message, and peek) now states that `wait: true` can be used to wait, and that parents are automatically notified when their subagents complete.
+
 ### Fixed
+- **`get_subagent_result wait:true` no longer early-exits on follow-up messages** — only queued *steering* messages (Enter while streaming) interrupt the wait so the parent turn can process them. Follow-ups (Alt+Enter) intentionally wait until the agent is idle and no longer cancel an in-progress wait. (`hasPendingMessages()` alone is true for both queues; we inspect the parent session's steering queue.)
 - **Finished parents no longer leave live children as `⚠ orphan`** in the recursive widget — keep ancestor chains visible while any descendant is running/queued; 10‑minute cleanup and clear paths also retain parents that still anchor live children (including nested managers).
 
 ## [0.14.0] - 2026-07-21

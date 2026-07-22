@@ -60,7 +60,7 @@ import { FleetList, type FleetUICtx } from "./ui/fleet-list.js";
 import { menuSelect } from "./ui/menu-select.js";
 import { showSchedulesMenu } from "./ui/schedule-menu.js";
 import { addUsage, getLifetimeTotal, getSessionContextPercent } from "./usage.js";
-import { formatWaitTimeout, pollPendingMessages, raceWait, type WaitOutcome, waitTimeoutMessage } from "./wait.js";
+import { formatWaitTimeout, hasSteeringPending, pollPendingMessages, raceWait, STILL_RUNNING_GUIDANCE, type WaitOutcome, waitTimeoutMessage } from "./wait.js";
 
 // ---- Shared helpers ----
 
@@ -1211,7 +1211,7 @@ export default function (pi: ExtensionAPI) {
       }),
       wait: Type.Optional(
         Type.Boolean({
-          description: `If true, block until the agent completes before returning. Blocks up to the configured wait timeout (${formatWaitTimeout(getWaitTimeoutSeconds())} by default); if the agent is still running when the timeout is reached, returns its current status — call again with wait: true to keep waiting. Interruptible by the parent turn. Default: false.`,
+          description: `If true, block until the agent completes before returning. Blocks up to the configured wait timeout (${formatWaitTimeout(getWaitTimeoutSeconds())} by default); if the agent is still running when the timeout is reached, returns its current status — call again with wait: true to keep waiting. Interruptible by the parent turn abort or a queued steering message (Enter); follow-up messages (Alt+Enter) do not interrupt. Default: false.`,
         }),
       ),
       verbose: Type.Optional(
@@ -1289,11 +1289,14 @@ export default function (pi: ExtensionAPI) {
       // PEEK — lightweight view; ignored when verbose is true.
       if (params.peek && !params.verbose) {
         const peek = peekAgentOutput(record, params.peek as PeekOptions);
-        return textResult(
-          peek
-            ? `${peek.text}\n\n---\nUse verbose: true for a bounded conversation preview, or omit peek for a bounded result preview.`
-            : "No output yet for this agent.",
-        );
+        let peekText = peek
+          ? `${peek.text}\n\n---\nUse verbose: true for a bounded conversation preview, or omit peek for a bounded result preview.`
+          : "No output yet for this agent.";
+        // Still-running peeks must still steer the parent away from polling.
+        if (record.status === "running" || record.status === "queued") {
+          peekText += `\n\n${STILL_RUNNING_GUIDANCE}`;
+        }
+        return textResult(peekText);
       }
 
       // WAIT — race the agent's completion against the configured timeout and
@@ -1302,11 +1305,11 @@ export default function (pi: ExtensionAPI) {
       let waitOutcome: WaitOutcome = "completed";
       if (params.wait && record.status === "running" && record.promise) {
         cancelNudge(params.agent_id);
-        // Poll for queued user messages so we can return early and let the
-        // parent LLM process them immediately instead of blocking for the
-        // full wait timeout.
-        const pending = typeof ctx?.hasPendingMessages === "function"
-          ? pollPendingMessages(() => ctx.hasPendingMessages())
+        // Poll for queued *steering* messages (Enter) so we can return early and
+        // let the parent turn process them. Follow-ups (Alt+Enter) must NOT
+        // interrupt the wait — they intentionally wait until the agent is idle.
+        const pending = ctx
+          ? pollPendingMessages(() => hasSteeringPending(ctx))
           : undefined;
         try {
           waitOutcome = await raceWait(record.promise, signal, getWaitTimeoutSeconds(), pending?.promise);
@@ -1345,8 +1348,9 @@ export default function (pi: ExtensionAPI) {
         (record.outputFile ? `Output file: ${record.outputFile}\n` : "") +
         `\n`;
 
-      if (record.status === "running") {
-        // The wait returned while the agent was still running (timeout or abort).
+      if (record.status === "running" || record.status === "queued") {
+        // Agent has not finished — include wait:true + auto-notification guidance.
+        // Covers wait timeout/abort/pending-message outcomes and plain status checks.
         output += waitTimeoutMessage(waitOutcome, getWaitTimeoutSeconds());
       } else if (record.status === "error") {
         // Error headline + any partial output the run produced before failing (#144).
