@@ -5,10 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.15.0] - 2026-07-23
 
 ### Added
 - **`rollupChildUsage` setting** — when on, each subagent's token usage deltas are also added to every ancestor along `parentAgentId` (recursive, process-wide). Default off. Accounting visibility only — does not change provider billing. `/agents → Settings → Roll up child usage`.
+- **Thinking/effort level shown in the `Agent` call header** — the transcript line (`▸ Agent …`) now includes a `thinking: <level>` badge after the model badge whenever the level is pinned (explicit `thinking` param or agent frontmatter). Inherited levels stay hidden at call time and still appear in the result stats.
 
 ### Changed
 - **`get_subagent_result` still-running responses always include wait + notification guidance** — every response while an agent is running or queued (status check, wait timeout/abort/pending-message, and peek) now states that `wait: true` can be used to wait, and that parents are automatically notified when their subagents complete.
@@ -16,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **`get_subagent_result wait:true` no longer early-exits on follow-up messages** — only queued *steering* messages (Enter while streaming) interrupt the wait so the parent turn can process them. Follow-ups (Alt+Enter) intentionally wait until the agent is idle and no longer cancel an in-progress wait. (`hasPendingMessages()` alone is true for both queues; we inspect the parent session's steering queue.)
 - **Finished parents no longer leave live children as `⚠ orphan`** in the recursive widget — keep ancestor chains visible while any descendant is running/queued; 10‑minute cleanup and clear paths also retain parents that still anchor live children (including nested managers).
+- **Usage registry hardened for nested rollup and failed spawns** — failed `startAgent` spawns force-unregister (no registry leak); cleanup/clear paths soft-retain ancestors of process-wide live descendants so nested managers keep their rollup targets, cascading release when the last child goes; FleetView prefers `lifetimeUsage` so rolled-up totals are what it shows.
 
 ## [0.14.0] - 2026-07-21
 
