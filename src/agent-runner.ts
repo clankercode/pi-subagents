@@ -56,6 +56,10 @@ const RECURSIVE_TOOL_NAMES: string[] = [
   SUBAGENT_TOOL_NAMES.STEER,
 ];
 
+// Public cross-extension contract: the symbol name and the
+// { depth, agentId, parentAgentId } value shape are consumed by other
+// extensions (e.g. pi-goal-expander B031) to detect subagent child sessions.
+// Do not rename/reshape without a coordinated update.
 const EXTENSION_DEPTH_KEY = Symbol.for("pi-subagents:extension-depth");
 
 /** Lifecycle event names that should propagate from child to parent sessions. */
