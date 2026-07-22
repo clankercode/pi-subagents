@@ -273,6 +273,36 @@ describe("Agent renderCall", () => {
     expect(text).toContain("schedule: every weekday 09:00");
   });
 
+  it("shows the thinking/effort level as a badge after the model", () => {
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+    const rendered = tools.get("Agent").renderCall(
+      {
+        subagent_type: "general-purpose",
+        description: "fan out",
+        model: "haiku",
+        thinking: "high",
+      },
+      theme,
+    );
+    const text = rendered.render(200).join("\n");
+    const modelIdx = text.indexOf("haiku");
+    const thinkingIdx = text.indexOf("thinking: high");
+    expect(modelIdx).toBeGreaterThan(-1);
+    expect(thinkingIdx).toBeGreaterThan(modelIdx);
+  });
+
+  it("omits the thinking badge when no level is set (inherited)", () => {
+    const { pi, tools } = makePi();
+    subagentsExtension(pi);
+    const rendered = tools.get("Agent").renderCall(
+      { subagent_type: "general-purpose", description: "summarize repo" },
+      theme,
+    );
+    const text = rendered.render(200).join("\n");
+    expect(text).not.toContain("thinking:");
+  });
+
   it("truncates long schedule values rather than wrapping the call", () => {
     const { pi, tools } = makePi();
     subagentsExtension(pi);

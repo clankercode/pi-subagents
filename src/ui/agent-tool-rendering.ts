@@ -40,6 +40,8 @@ export interface AgentCallArgs {
   description?: string;
   /** Explicit per-call model override (`provider/modelId` or fuzzy name). */
   model?: string;
+  /** Explicit per-call thinking/effort level override. */
+  thinking?: string;
   /** Agent ID being resumed; only set on resume calls. */
   resume?: string;
   /** Schedule expression; only set on schedule calls. */
@@ -62,11 +64,28 @@ function resolveCallModel(args: any): string | undefined {
   return undefined;
 }
 
+/**
+ * Resolve the thinking level this call will use, if it's knowable before
+ * execute(). Mirrors resolveAgentInvocationConfig: agent config frontmatter >
+ * explicit `args.thinking` > none (inherited levels are surfaced later by
+ * `renderResult`).
+ */
+function resolveCallThinking(args: any): string | undefined {
+  if (typeof args.subagent_type === "string") {
+    const fromConfig = getAgentConfig(args.subagent_type)?.thinking;
+    if (fromConfig) return fromConfig;
+  }
+  if (typeof args.thinking === "string" && args.thinking) return args.thinking;
+  return undefined;
+}
+
 /** Build the dimmed badge list shown between the agent name and the description. */
 function buildCallBadges(args: any, theme: any): string {
   const badges: string[] = [];
   const callModel = resolveCallModel(args);
   if (callModel) badges.push(getModelLabelFromConfig(callModel));
+  const callThinking = resolveCallThinking(args);
+  if (callThinking) badges.push(`thinking: ${callThinking}`);
   if (typeof args.resume === "string" && args.resume) {
     badges.push(`resume: ${compactPreview(args.resume, 12)}`);
   }
