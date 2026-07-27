@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.1] - 2026-07-27
+
+### Changed
+- **Anti-polling guidance, attempt #2 — remove invitations, don't append prohibitions** — the spawn/resume ack no longer points parents at `get_subagent_result` for "bounded result previews" (the invitation to poll, now deleted rather than qualified). A shared `BACKGROUND_ACK_FOOTER` keeps both acks identical and leads with the automatic completion notification: end your turn or continue with other work; `wait: true` is the explicit fallback only when you cannot proceed without the result. `STILL_RUNNING_GUIDANCE` and all `waitTimeoutMessage` variants lead with the notification ("check back later" is gone), the `get_subagent_result` description/`promptSnippet`/`wait` param and Agent `promptGuidelines` tell the same story, and the "background by default" bullet no longer contradicts "end your turn" in full or compact tool descriptions. Strings only — no behavior change.
+
 ## [0.15.0] - 2026-07-23
 
 ### Added
