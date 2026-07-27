@@ -10,7 +10,7 @@ vi.mock("../src/agent-runner.js", async () => {
 });
 
 import { resumeAgent, runAgent } from "../src/agent-runner.js";
-import subagentsExtension from "../src/index.js";
+import subagentsExtension, { BACKGROUND_ACK_FOOTER } from "../src/index.js";
 
 function makePi() {
   const tools = new Map<string, any>();
@@ -172,6 +172,11 @@ describe("print mode background notifications", () => {
     const id = first.content[0].text.match(/Agent ID: (\S+)/)?.[1];
     expect(id).toBeTruthy();
 
+    // The spawn ack must not invite polling — the old "inspect bounded result
+    // previews" pointer is removed, not qualified.
+    expect(first.content[0].text).not.toContain("inspect bounded result previews");
+    expect(first.content[0].text.endsWith(BACKGROUND_ACK_FOOTER)).toBe(true);
+
     await vi.advanceTimersByTimeAsync(250);
     vi.mocked(pi.sendMessage).mockClear();
 
@@ -198,6 +203,8 @@ describe("print mode background notifications", () => {
     expect(resumed.content[0].text).toContain("Agent resumed in background.");
     expect(resumed.content[0].text).toContain(`Agent ID: ${id}`);
     expect(resumed.content[0].text).not.toContain("resumed output");
+    // Resume ack shares the exact same footer as the spawn ack (no drift).
+    expect(resumed.content[0].text.endsWith(BACKGROUND_ACK_FOOTER)).toBe(true);
 
     resolveResume({ text: "resumed output" });
     await vi.advanceTimersByTimeAsync(250);

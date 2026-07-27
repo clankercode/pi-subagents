@@ -288,13 +288,13 @@ Launch a sub-agent.
 | `isolation` | `"worktree"` | no | Run in an isolated git worktree |
 | `inherit_context` | boolean | no | Fork parent conversation into agent |
 
-All `Agent` calls run in the background. Completion notifications are delivered automatically; use `get_subagent_result` only when you explicitly need to check status or inspect a bounded result preview. Full transcripts are written to the agent output file shown in the `Agent` response and `get_subagent_result` output.
+All `Agent` calls run in the background. Completion notifications are delivered automatically — end your turn or continue with other work and the result arrives in a later turn; do not poll. If you cannot proceed without a result, call `get_subagent_result` with `wait: true` to block for it (preferred over repeated non-wait calls); a non-wait call is a one-off status check. Full transcripts are written to the agent output file shown in the `Agent` response and `get_subagent_result` output.
 
 The transcript call line (`▸ Agent …`) shows dimmed badges for the call-time metadata it can resolve up front: model, `thinking: <level>` (when pinned via parameter or agent frontmatter), `resume:`, `schedule:`, `worktree`, `isolated`. Values inherited from the parent session are omitted here and appear later in the result stats.
 
 ### `get_subagent_result`
 
-Check status and retrieve bounded output from a background agent. The tool is safe-by-default for LLM context: normal results, verbose conversation output, and `peek` responses are capped. If output is truncated, the response includes the output file path and continuation guidance. While the agent is still running or queued, every response (including peek) reminds you that `wait: true` can block until completion and that parents are automatically notified when subagents complete — no polling required.
+Check status and retrieve bounded output from a background agent. The tool is safe-by-default for LLM context: normal results, verbose conversation output, and `peek` responses are capped. If output is truncated, the response includes the output file path and continuation guidance. While the agent is still running or queued, every response (including peek) leads with the automatic completion notification — end your turn rather than polling — and reserves `wait: true` blocking for when you cannot proceed without the result.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

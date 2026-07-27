@@ -159,6 +159,17 @@ function partialOutputSuffix(record: AgentRecord): string {
  */
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
+/**
+ * Trailing guidance on every background spawn/resume ack. Shared by both call
+ * sites so the two footers cannot drift apart. Leads with the automatic
+ * completion notification and explicitly removes any invitation to poll.
+ */
+export const BACKGROUND_ACK_FOOTER =
+  "You will be notified when this agent completes — its result arrives automatically in a later turn. Do NOT poll it.\n" +
+  "End your turn now (briefly tell the user what you launched), or continue with other independent work.\n" +
+  "If you genuinely cannot proceed without this agent's result, call get_subagent_result with wait: true to block for it. Non-wait calls are for one-off status checks, not repeated polling.\n" +
+  "Use steer_subagent to send it messages. Do not duplicate this agent's work.";
+
 export default function (pi: ExtensionAPI) {
   const extensionDepth = getCurrentExtensionDepth();
   const extensionAgentId = getCurrentExtensionAgentId();
@@ -673,7 +684,7 @@ export default function (pi: ExtensionAPI) {
 
   // ---- Wait timeout configuration ----
   // How long get_subagent_result wait:true blocks before returning current
-  // status. Bounds the parent turn; the caller re-invokes to keep waiting.
+  // status. Bounds the parent turn; the caller re-invokes to keep blocking.
   let waitTimeoutSeconds = DEFAULT_WAIT_TIMEOUT_SECONDS;
   function getWaitTimeoutSeconds(): number { return waitTimeoutSeconds; }
   function setWaitTimeoutSeconds(seconds: number): void {
@@ -801,7 +812,7 @@ export default function (pi: ExtensionAPI) {
     promptGuidelines: [
       "Use Agent with specialized agents when the task matches an agent type's description. Subagents are valuable for parallelizing independent queries or for protecting the main context window from excessive results, but should not be used excessively when not needed. Importantly, avoid duplicating work that subagents are already doing — if you delegate research to a subagent, do not also perform the same searches yourself.",
       "For broad codebase exploration or research, spawn Agent with an appropriate subagent_type (e.g. Explore). Otherwise use direct tools (read, grep, find) when the target is already known.",
-      "Agents always run in the background. You will be notified on completion — do not poll or sleep waiting for it. Continue with other work instead.",
+      "Agents always run in the background. You will be notified on completion — do not poll or sleep waiting for it. End your turn or continue with other work; if you cannot proceed without a result, use get_subagent_result with wait: true to block for it.",
       "Trust but verify: an agent's summary describes intent, not outcome. When an agent writes or edits code, check the actual changes before reporting work as done.",
     ],
     parameters: Type.Object({
@@ -1090,7 +1101,7 @@ export default function (pi: ExtensionAPI) {
         const resumeDetails = { displayName: getDisplayName(record.type), description: record.description, subagentType: record.type, modelName: record.invocation?.modelName };
         return textResult(
           `Agent resumed in background.\nAgent ID: ${record.id}\nType: ${resumeDetails.displayName}\nDescription: ${record.description}\n\n` +
-          `You will be notified when this agent completes.\nUse get_subagent_result to inspect bounded result previews, or steer_subagent to send it messages.\nDo not duplicate this agent's work.`,
+          BACKGROUND_ACK_FOOTER,
           buildDetails(resumeDetails, record, state, { status: "background" }),
         );
       }
@@ -1191,7 +1202,7 @@ export default function (pi: ExtensionAPI) {
         `Agent ${isQueued ? "queued" : "started"} in background.\nAgent ID: ${id}\nType: ${displayName}\nDescription: ${P.description}\n` +
         (record?.outputFile ? `Output file: ${record.outputFile}\n` : "") +
         (isQueued ? `Position: queued (max ${manager.getMaxConcurrent()} concurrent)\n` : "") +
-        `\nYou will be notified when this agent completes.\nUse get_subagent_result to inspect bounded result previews, or steer_subagent to send it messages.\nDo not duplicate this agent's work.`,
+        `\n${BACKGROUND_ACK_FOOTER}`,
         { ...detailBase, toolUses: 0, tokens: "", durationMs: 0, status: "background" as const, agentId: id },
       );
     },
@@ -1203,15 +1214,16 @@ export default function (pi: ExtensionAPI) {
     name: SUBAGENT_TOOL_NAMES.GET_RESULT,
     label: "Get Agent Result",
     description:
-      "Check status and retrieve results from a background agent. Use the agent ID returned by Agent.",
-    promptSnippet: "Check status and retrieve results from a background agent",
+      "Check status and retrieve results from a background agent. Use the agent ID returned by Agent.\n\n" +
+      "You are automatically notified when an agent completes, so do NOT use this tool to poll — end your turn and wait for the notification instead. Only call it when you truly need the result now: pass wait: true to block until the agent finishes (preferred over repeated non-wait calls), or omit wait for a one-off status check.",
+    promptSnippet: "Retrieve a background agent's result when you cannot proceed without it (you are notified on completion — do not poll)",
     parameters: Type.Object({
       agent_id: Type.String({
         description: "The agent ID to check.",
       }),
       wait: Type.Optional(
         Type.Boolean({
-          description: `If true, block until the agent completes before returning. Blocks up to the configured wait timeout (${formatWaitTimeout(getWaitTimeoutSeconds())} by default); if the agent is still running when the timeout is reached, returns its current status — call again with wait: true to keep waiting. Interruptible by the parent turn abort or a queued steering message (Enter); follow-up messages (Alt+Enter) do not interrupt. Default: false.`,
+          description: `If true, block until the agent completes before returning. Blocks up to the configured wait timeout (${formatWaitTimeout(getWaitTimeoutSeconds())} by default); if the agent is still running when the timeout is reached, returns its current status — call again with wait: true only if you still need to keep blocking. Interruptible by the parent turn abort or a queued steering message (Enter); follow-up messages (Alt+Enter) do not interrupt. Default: false. Prefer ending your turn and waiting for the automatic completion notification over blocking; use wait: true only when you cannot make progress without the result.`,
         }),
       ),
       verbose: Type.Optional(

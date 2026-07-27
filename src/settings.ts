@@ -71,7 +71,7 @@ export interface SubagentsSettings {
    * How long (seconds) `get_subagent_result wait:true` blocks before returning
    * the agent's current status instead of its result. Bounds the parent turn so
    * a long-running subagent can't wedge it indefinitely; the caller re-invokes
-   * to keep waiting. Default 270 (4m30s) to stay under the typical 5-minute LLM
+   * to keep blocking. Default 270 (4m30s) to stay under the typical 5-minute LLM
    * prompt-cache window. Range 30–3600.
    */
   waitTimeoutSeconds?: number;

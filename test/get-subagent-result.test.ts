@@ -141,9 +141,9 @@ describe("get_subagent_result wait race", () => {
     const out = textOf(res);
     expect(out).toContain("still running");
     expect(out).toMatch(/timed out/i);
-    expect(out).toContain("Call get_subagent_result with wait: true again");
+    expect(out).toContain("Only call again with wait: true if you still need to block");
     expect(out).toContain(STILL_RUNNING_GUIDANCE);
-    expect(out).toMatch(/automatically notified/i);
+    expect(out).toMatch(/notified automatically/i);
 
     // The subagent promise was never aborted — resolving it later still works.
     resolveRun({ responseText: "LATE", session: { dispose: vi.fn() }, aborted: false, steered: false });
@@ -162,7 +162,7 @@ describe("get_subagent_result wait race", () => {
     expect(out).toContain("still running");
     expect(out).toMatch(/wait:\s*true/);
     expect(out).toContain(STILL_RUNNING_GUIDANCE);
-    expect(out).toMatch(/Parents are automatically notified when their subagents complete/);
+    expect(out).toMatch(/notified automatically/i);
   });
 
   it("wait:true timeout does not suppress the eventual completion notification", async () => {
@@ -273,7 +273,7 @@ describe("get_subagent_result peek", () => {
     const out = textOf(res);
     expect(out).toContain(STILL_RUNNING_GUIDANCE);
     expect(out).toMatch(/wait:\s*true/);
-    expect(out).toMatch(/automatically notified/i);
+    expect(out).toMatch(/notified automatically/i);
   });
 
   it("filter-then-tail applies regex before selecting lines", async () => {

@@ -23,8 +23,16 @@ describe("waitTimeoutMessage", () => {
     expect(msg).toContain("still running");
     expect(msg).toMatch(/wait:\s*true/);
     expect(msg).toContain(STILL_RUNNING_GUIDANCE);
-    expect(msg).toMatch(/automatically notified/i);
-    expect(msg).toMatch(/Parents are automatically notified when their subagents complete/);
+    expect(msg).toMatch(/notified automatically/i);
+  });
+
+  it.each(outcomes)("never invites polling via 'check back later' for outcome=%s", (outcome) => {
+    expect(waitTimeoutMessage(outcome, 270)).not.toContain("check back later");
+  });
+
+  it("still-running guidance leads with the notification, not with wait:true", () => {
+    expect(STILL_RUNNING_GUIDANCE).toMatch(/^You will be notified automatically/);
+    expect(STILL_RUNNING_GUIDANCE.indexOf("notified")).toBeLessThan(STILL_RUNNING_GUIDANCE.indexOf("wait: true"));
   });
 
   it("describes timeout duration", () => {

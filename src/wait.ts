@@ -68,11 +68,12 @@ export function raceWait(
 
 /**
  * Guidance included on every get_subagent_result response while the agent is
- * still running or queued. Reminds callers they can block with wait:true, and
- * that completion notifications are delivered automatically (no need to poll).
+ * still running or queued. Leads with the automatic completion notification —
+ * polling is unnecessary — and reserves wait:true for callers that genuinely
+ * cannot proceed without the result.
  */
 export const STILL_RUNNING_GUIDANCE =
-  "Use wait: true to wait for the agent to finish. Parents are automatically notified when their subagents complete.";
+  "You will be notified automatically when the agent completes — polling is unnecessary. End your turn and wait for the notification, or use wait: true only if you cannot proceed without the result.";
 
 /** Message returned when a wait ends with the agent still running. */
 export function waitTimeoutMessage(outcome: WaitOutcome, timeoutSeconds: number): string {
@@ -80,19 +81,19 @@ export function waitTimeoutMessage(outcome: WaitOutcome, timeoutSeconds: number)
   if (outcome === "timeout") {
     head =
       `Agent is still running. The wait timed out after ${formatWaitTimeout(timeoutSeconds)} to avoid blocking the parent session longer than the configured limit.\n` +
-      `Call get_subagent_result with wait: true again to keep waiting, or omit wait to check status.`;
+      `Only call again with wait: true if you still need to block for the result; otherwise end your turn and wait for the automatic completion notification.`;
   } else if (outcome === "aborted") {
     head =
       `Agent is still running. The wait was cancelled by the user (parent turn aborted). The subagent was NOT stopped — it continues in the background.\n` +
-      `Call get_subagent_result with wait: true again to keep waiting, use peek to check progress, or omit wait to check status.`;
+      `Only call again with wait: true if you still need to block for the result; use peek to check progress, or end your turn and wait for the automatic completion notification.`;
   } else if (outcome === "pending_message") {
     head =
       `Agent is still running. The wait was interrupted by an incoming steering message. The subagent was NOT stopped — it continues in the background.\n` +
       `The queued steering message will be delivered after this tool returns.\n` +
-      `Call get_subagent_result with wait: true again to keep waiting, use peek to check progress, or omit wait to check status.`;
+      `Only call again with wait: true if you still need to block for the result; use peek to check progress, or end your turn and wait for the automatic completion notification.`;
   } else {
     head =
-      "Agent is still running. Use peek to check recent progress, wait: true to block until it finishes, or check back later.";
+      "Agent is still running. Use peek to check recent progress, wait: true to block until it finishes, or end your turn and wait for the completion notification (preferred).";
   }
   return `${head}\n${STILL_RUNNING_GUIDANCE}`;
 }

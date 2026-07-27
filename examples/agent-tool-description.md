@@ -18,9 +18,9 @@ If the target is already known, use a direct tool — `read` for a known path, `
 - When the agent is done, it returns a single message back to you. The result is not visible to the user — to show the user, send a text message with a concise summary.
 - Trust but verify: an agent's summary describes what it intended to do, not necessarily what it did. When an agent writes or edits code, check the actual changes before reporting work as done.
 - Agents always run in the background. You will be notified when each completes — do NOT poll or sleep waiting for it. Continue with other work or respond to the user instead.
-- Background by default: when useful independent work exists, launch it and keep going. Doing nothing while an agent runs is worse than using background capacity.
+- Background by default: when useful independent work exists, launch it and keep going — idling while an agent runs wastes background capacity. When you have no independent work, end your turn rather than blocking or polling; the completion notification will wake you.
 - {{recursiveGuideline}}
-- Use get_subagent_result if you need to retrieve a result before the completion notification arrives, but do not poll or sleep waiting for it.
+- If you cannot proceed without an agent's result, call get_subagent_result with wait: true to block for it. Otherwise end your turn — the completion notification will wake you. Never poll (repeated get_subagent_result calls) or sleep waiting for an agent.
 - Use resume with an agent ID to continue a previous agent's work. A new (non-resume) Agent call starts a fresh agent with no memory of prior runs, so the prompt must be self-contained.
 - Use list_models to enumerate the model registry the `model:` param accepts before passing a model name explicitly.
 - Use steer_subagent to send mid-run messages to a running background agent.
