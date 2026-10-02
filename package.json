@@ -1,6 +1,6 @@
 {
   "name": "@clanker-code/pi-subagents",
-  "version": "0.15.1",
+  "version": "0.15.2",
   "description": "A pi extension extension that brings smart Claude Code-style autonomous sub-agents to pi.",
   "author": "clankercode",
   "license": "MIT",
@@ -26,7 +26,6 @@
     "@earendil-works/pi-tui": ">=0.74.0"
   },
   "dependencies": {
-    "@sinclair/typebox": "^0.34.49",
     "croner": "^10.0.1",
     "nanoid": "^5.0.0"
   },
