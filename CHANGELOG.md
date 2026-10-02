@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.15.2] - 2026-10-03
 
 ### Fixed
-- **Pi 1.0 host module warning** — `@sinclair/typebox` is a peer dependency (`*`) instead of a direct dependency. Pi supplies that module and aliases it to host `typebox`, so a second installed copy is no longer declared. Imports are unchanged.
+- **Pi 1.0 host module warning** — `typebox` is a peer dependency (`*`) instead of a direct dependency. Source still imports `@sinclair/typebox`, which Pi aliases to its host `typebox`. CI installs that package under the old name as a dev dependency only.
 
 ## [0.15.1] - 2026-07-27
 
